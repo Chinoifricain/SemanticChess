@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using DG.Tweening;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -17,6 +18,7 @@ public class ChessBoard : MonoBehaviour
     private int _selectedIndex = -1;
     private readonly List<int> _validMoves = new List<int>();
     private readonly List<GameObject> _indicators = new List<GameObject>();
+    private bool _isMoving;
     private static readonly Color Transparent = new Color(0, 0, 0, 0);
 
     private void Start()
@@ -86,6 +88,8 @@ public class ChessBoard : MonoBehaviour
 
     private void OnTileClicked(int index)
     {
+        if (_isMoving) return;
+
         // Nothing selected yet
         if (_selectedIndex == -1)
         {
@@ -108,12 +112,14 @@ public class ChessBoard : MonoBehaviour
             return;
         }
 
-        // Clicked a valid move target -> execute
+        // Clicked a valid move target -> clear indicators, move while lifted, drop on arrival
         if (_validMoves.Contains(index))
         {
-            ExecuteMove(_selectedIndex, index);
-            Deselect();
-            ToggleTurn();
+            int from = _selectedIndex;
+            ClearIndicators();
+            _selectedIndex = -1;
+            _validMoves.Clear();
+            ExecuteMove(from, index);
             return;
         }
 
@@ -127,6 +133,7 @@ public class ChessBoard : MonoBehaviour
         if (piece == null || piece.Color != _currentTurn) return;
 
         _selectedIndex = index;
+        piece.Select();
         _validMoves.Clear();
         _validMoves.AddRange(piece.GetPossibleMoves(index, _board));
         ShowIndicators();
@@ -134,24 +141,39 @@ public class ChessBoard : MonoBehaviour
 
     private void ExecuteMove(int from, int to)
     {
-        // Capture
-        if (_board[to] != null)
-            Destroy(_board[to].gameObject);
+        _isMoving = true;
 
-        // Reparent piece to target tile
         ChessPiece piece = _board[from];
+        RectTransform pieceRT = piece.GetComponent<RectTransform>();
         Transform targetTile = _tileContainer.GetChild(to);
-        piece.transform.SetParent(targetTile, false);
 
-        RectTransform rt = piece.GetComponent<RectTransform>();
-        rt.anchorMin = Vector2.zero;
-        rt.anchorMax = Vector2.one;
-        rt.sizeDelta = Vector2.zero;
-        rt.anchoredPosition = Vector2.zero;
+        // Unparent to Canvas so the piece renders above everything while moving
+        piece.transform.SetParent(_tileContainer.parent, true);
 
-        _board[to] = piece;
-        _board[from] = null;
-        piece.HasMoved = true;
+        // Compute target world position
+        Vector3 targetPos = targetTile.position;
+
+        pieceRT.DOMove(targetPos, 0.17f).SetEase(Ease.OutCubic).OnComplete(() =>
+        {
+            // Capture
+            if (_board[to] != null)
+                Destroy(_board[to].gameObject);
+
+            // Reparent to target tile
+            piece.transform.SetParent(targetTile, false);
+            pieceRT.anchorMin = Vector2.zero;
+            pieceRT.anchorMax = Vector2.one;
+            pieceRT.sizeDelta = Vector2.zero;
+            pieceRT.anchoredPosition = Vector2.zero;
+
+            _board[to] = piece;
+            _board[from] = null;
+            piece.HasMoved = true;
+            piece.Deselect();
+
+            _isMoving = false;
+            ToggleTurn();
+        });
     }
 
     private void ToggleTurn()
@@ -163,12 +185,16 @@ public class ChessBoard : MonoBehaviour
 
     private void ShowIndicators()
     {
+        int fromCol = _selectedIndex % 8;
+        int fromRow = _selectedIndex / 8;
+
         foreach (int idx in _validMoves)
         {
             Transform tile = _tileContainer.GetChild(idx);
 
             GameObject dot = new GameObject("MoveIndicator");
             dot.transform.SetParent(tile, false);
+            dot.transform.localScale = Vector3.zero;
 
             RectTransform rt = dot.AddComponent<RectTransform>();
             rt.anchorMin = Vector2.zero;
@@ -180,6 +206,13 @@ public class ChessBoard : MonoBehaviour
             img.sprite = _moveIndicatorSprite;
             img.raycastTarget = false;
 
+            int dc = (idx % 8) - fromCol;
+            int dr = (idx / 8) - fromRow;
+            float dist = Mathf.Sqrt(dc * dc + dr * dr);
+            float delay = dist * 0.012f;
+
+            dot.transform.DOScale(Vector3.one, 0.17f).SetEase(Ease.OutCubic).SetDelay(delay);
+
             _indicators.Add(dot);
         }
     }
@@ -187,13 +220,18 @@ public class ChessBoard : MonoBehaviour
     private void ClearIndicators()
     {
         foreach (GameObject dot in _indicators)
-            Destroy(dot);
+        {
+            GameObject d = dot;
+            d.transform.DOScale(Vector3.zero, 0.057f).SetEase(Ease.OutCubic)
+                .OnComplete(() => Destroy(d));
+        }
         _indicators.Clear();
     }
 
     private void Deselect()
     {
         if (_selectedIndex == -1) return;
+        _board[_selectedIndex]?.Deselect();
         ClearIndicators();
         _selectedIndex = -1;
         _validMoves.Clear();

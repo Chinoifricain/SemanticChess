@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using DG.Tweening;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -22,9 +23,23 @@ public class ChessPiece : MonoBehaviour
     [SerializeField] private Image _image;
     [SerializeField] private Image _dropShadowImage;
 
+    [Header("Selection Offsets")]
+    [SerializeField] private Vector2 _selectSpriteOffset = new Vector2(0f, 8f);
+    [SerializeField] private Vector2 _selectShadowOffset = new Vector2(-1.5f, -2f);
+
+    [Header("Effects")]
+    [SerializeField] private ParticleSystem _dustParticle;
+
     public PieceType PieceType { get; private set; }
     public PieceColor Color { get; private set; }
     public bool HasMoved { get; set; }
+
+    private RectTransform _imageRT;
+    private RectTransform _shadowRT;
+    private Vector2 _imageRestPos;
+    private Vector2 _shadowRestPos;
+    private Tween _jitterTween;
+    private Tween _shadowJitterTween;
 
     public void Init(PieceType type, PieceColor color)
     {
@@ -35,6 +50,44 @@ public class ChessPiece : MonoBehaviour
         Sprite sprite = GetSprite(type, color);
         _image.sprite = sprite;
         _dropShadowImage.sprite = sprite;
+
+        _imageRT = _image.rectTransform;
+        _shadowRT = _dropShadowImage.rectTransform;
+        _imageRestPos = _imageRT.anchoredPosition;
+        _shadowRestPos = _shadowRT.anchoredPosition;
+    }
+
+    public void Select()
+    {
+        _imageRT.DOAnchorPos(_imageRestPos + _selectSpriteOffset, 0.1f).SetEase(Ease.OutCubic);
+        _shadowRT.DOAnchorPos(_shadowRestPos + _selectShadowOffset, 0.1f).SetEase(Ease.OutCubic);
+
+        _jitterTween = _imageRT.DORotate(new Vector3(0f, 0f, 1.5f), 0.06f)
+            .SetEase(Ease.InOutSine)
+            .SetLoops(-1, LoopType.Yoyo)
+            .From(new Vector3(0f, 0f, -1.5f));
+
+        _shadowJitterTween = _shadowRT.DORotate(new Vector3(0f, 0f, 1.5f), 0.06f)
+            .SetEase(Ease.InOutSine)
+            .SetLoops(-1, LoopType.Yoyo)
+            .From(new Vector3(0f, 0f, -1.5f));
+    }
+
+    public void Deselect()
+    {
+        _jitterTween?.Kill();
+        _jitterTween = null;
+        _imageRT.localRotation = Quaternion.identity;
+
+        _shadowJitterTween?.Kill();
+        _shadowJitterTween = null;
+        _shadowRT.localRotation = Quaternion.identity;
+
+        _imageRT.DOAnchorPos(_imageRestPos, 0.1f).SetEase(Ease.OutCubic);
+        _shadowRT.DOAnchorPos(_shadowRestPos, 0.1f).SetEase(Ease.OutCubic);
+
+        if (_dustParticle != null)
+            _dustParticle.Play();
     }
 
     private Sprite GetSprite(PieceType type, PieceColor color)
