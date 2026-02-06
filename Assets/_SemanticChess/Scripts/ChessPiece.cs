@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using DG.Tweening;
+using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
 
 public enum PieceType { Pawn, Knight, Bishop, Rook, Queen, King }
 public enum PieceColor { White, Black }
@@ -26,16 +26,17 @@ public class ChessPiece : MonoBehaviour
     [Header("Piece to Sprite")]
     [SerializeField] private PieceSpriteEntry[] _spriteEntries;
 
-    [Header("Image References")]
-    [SerializeField] private Image _image;
-    [SerializeField] private Image _dropShadowImage;
+    [Header("Renderer References")]
+    [SerializeField] private SpriteRenderer _spriteRenderer;
+    [SerializeField] private SpriteRenderer _shadowRenderer;
 
     [Header("Selection Offsets")]
-    [SerializeField] private Vector2 _selectSpriteOffset = new Vector2(0f, 8f);
-    [SerializeField] private Vector2 _selectShadowOffset = new Vector2(-1.5f, -2f);
+    [SerializeField] private Vector2 _selectSpriteOffset = new Vector2(0f, 0.11f);
+    [SerializeField] private Vector2 _selectShadowOffset = new Vector2(-0.02f, -0.03f);
 
     [Header("Effects")]
     [SerializeField] private ParticleSystem _dustParticle;
+    [SerializeField] private ParticleSystem _fightParticle;
     [SerializeField] private EffectSpriteEntry[] _effectSpriteEntries;
 
     public PieceType PieceType { get; private set; }
@@ -43,16 +44,38 @@ public class ChessPiece : MonoBehaviour
     public PieceColor OriginalColor { get; private set; }
     public bool HasMoved { get; set; }
 
+    // --- Element ---
+    public string Element { get; private set; }
+    public string Emoji { get; private set; }
+    private TextMeshPro _elementLabel;
+    private SpriteRenderer _emojiRenderer;
+    private Tween _labelPopTween;
+    private static readonly Vector3 EmojiRestLocal = new Vector3(0f, 0.45f, 0f);
+    private const float EmojiRadius = 6f;
+    private const float EmojiMinScale = 0.4f;
+    private const float EmojiMaxScale = 1.3f;
+    private const float EmojiAttractStrength = 0.08f;
+    private const float PopScale = 1.3f;
+    private const float PopDuration = 0.08f;
+
+    // --- Piece proximity + hover ---
+    private const float PieceRadius = 6f;
+    private const float PieceAttractStrength = 0.06f;
+    private const float PieceHoverBonus = 0.1f;
+    private const float PiecePopBonus = 0.3f;
+    private float _hoverBonus;
+    private Tween _hoverTween;
+
     // --- Effects ---
     private readonly List<ChessEffect> _effects = new List<ChessEffect>();
     public IReadOnlyList<ChessEffect> Effects => _effects;
     private readonly Dictionary<ChessEffect, GameObject> _effectIcons = new Dictionary<ChessEffect, GameObject>();
     private readonly Dictionary<ChessEffect, Tween> _effectIconTweens = new Dictionary<ChessEffect, Tween>();
 
-    private RectTransform _imageRT;
-    private RectTransform _shadowRT;
-    private Vector2 _imageRestPos;
-    private Vector2 _shadowRestPos;
+    private Transform _spriteT;
+    private Transform _shadowT;
+    private Vector3 _spriteRestPos;
+    private Vector3 _shadowRestPos;
     private Tween _jitterTween;
     private Tween _shadowJitterTween;
 
@@ -62,30 +85,39 @@ public class ChessPiece : MonoBehaviour
         Color = color;
         OriginalColor = color;
         HasMoved = false;
+        Element = null;
+        Emoji = null;
+        if (_elementLabel != null) { Object.Destroy(_elementLabel.gameObject); _elementLabel = null; }
+        if (_emojiRenderer != null) { Object.Destroy(_emojiRenderer.gameObject); _emojiRenderer = null; }
         ClearAllEffectIcons();
         _effects.Clear();
 
         Sprite sprite = GetSprite(type, color);
-        _image.sprite = sprite;
-        _dropShadowImage.sprite = sprite;
+        _spriteRenderer.sprite = sprite;
+        _shadowRenderer.sprite = sprite;
 
-        _imageRT = _image.rectTransform;
-        _shadowRT = _dropShadowImage.rectTransform;
-        _imageRestPos = _imageRT.anchoredPosition;
-        _shadowRestPos = _shadowRT.anchoredPosition;
+        _spriteT = _spriteRenderer.transform;
+        _shadowT = _shadowRenderer.transform;
+        _spriteRestPos = _spriteT.localPosition;
+        _shadowRestPos = _shadowT.localPosition;
+
+        _shadowRenderer.sortingLayerName = "piece";
+        _shadowRenderer.sortingOrder = 0;
+        _spriteRenderer.sortingLayerName = "piece";
+        _spriteRenderer.sortingOrder = 1;
     }
 
     public void Select()
     {
-        _imageRT.DOAnchorPos(_imageRestPos + _selectSpriteOffset, 0.1f).SetEase(Ease.OutCubic);
-        _shadowRT.DOAnchorPos(_shadowRestPos + _selectShadowOffset, 0.1f).SetEase(Ease.OutCubic);
+        _spriteT.DOLocalMove(_spriteRestPos + (Vector3)_selectSpriteOffset, 0.1f).SetEase(Ease.OutCubic);
+        _shadowT.DOLocalMove(_shadowRestPos + (Vector3)_selectShadowOffset, 0.1f).SetEase(Ease.OutCubic);
 
-        _jitterTween = _imageRT.DORotate(new Vector3(0f, 0f, 1.5f), 0.06f)
+        _jitterTween = _spriteT.DORotate(new Vector3(0f, 0f, 1.5f), 0.06f)
             .SetEase(Ease.InOutSine)
             .SetLoops(-1, LoopType.Yoyo)
             .From(new Vector3(0f, 0f, -1.5f));
 
-        _shadowJitterTween = _shadowRT.DORotate(new Vector3(0f, 0f, 1.5f), 0.06f)
+        _shadowJitterTween = _shadowT.DORotate(new Vector3(0f, 0f, 1.5f), 0.06f)
             .SetEase(Ease.InOutSine)
             .SetLoops(-1, LoopType.Yoyo)
             .From(new Vector3(0f, 0f, -1.5f));
@@ -95,17 +127,59 @@ public class ChessPiece : MonoBehaviour
     {
         _jitterTween?.Kill();
         _jitterTween = null;
-        _imageRT.localRotation = Quaternion.identity;
+        _spriteT.localRotation = Quaternion.identity;
 
         _shadowJitterTween?.Kill();
         _shadowJitterTween = null;
-        _shadowRT.localRotation = Quaternion.identity;
+        _shadowT.localRotation = Quaternion.identity;
 
-        _imageRT.DOAnchorPos(_imageRestPos, 0.1f).SetEase(Ease.OutCubic);
-        _shadowRT.DOAnchorPos(_shadowRestPos, 0.1f).SetEase(Ease.OutCubic);
+        _spriteT.DOLocalMove(_spriteRestPos, 0.1f).SetEase(Ease.OutCubic);
+        _shadowT.DOLocalMove(_shadowRestPos, 0.1f).SetEase(Ease.OutCubic);
 
         if (_dustParticle != null)
             _dustParticle.Play();
+    }
+
+    private void Update()
+    {
+        Camera cam = Camera.main;
+        if (cam == null) return;
+
+        Vector3 mouseWorld = cam.ScreenToWorldPoint(Input.mousePosition);
+        mouseWorld.z = 0f;
+        Vector3 pieceWorld = transform.position;
+        float dist = Vector2.Distance(mouseWorld, pieceWorld);
+        float smooth = Time.deltaTime * 12f;
+
+        // --- Piece proximity offset ---
+        float pt = 1f - Mathf.Clamp01(dist / PieceRadius);
+        Vector3 pieceDir = (mouseWorld - pieceWorld);
+        pieceDir.z = 0f;
+        Vector3 pieceOffset = pieceDir.normalized * (pt * PieceAttractStrength);
+        _spriteT.localPosition = Vector3.Lerp(
+            _spriteT.localPosition, _spriteRestPos + pieceOffset, smooth);
+        _shadowT.localPosition = Vector3.Lerp(
+            _shadowT.localPosition, _shadowRestPos + pieceOffset * 0.5f, smooth);
+
+        // --- Piece hover scale (driven by DOTween on _hoverBonus) ---
+        transform.localScale = Vector3.one * (1f + _hoverBonus);
+
+        // --- Emoji proximity scaling + attraction ---
+        if (_emojiRenderer != null && _emojiRenderer.sprite != null && _emojiRenderer.gameObject.activeSelf)
+        {
+            float et = 1f - Mathf.Clamp01(dist / EmojiRadius);
+
+            float emojiScale = Mathf.Lerp(EmojiMinScale, EmojiMaxScale, et);
+            _emojiRenderer.transform.localScale = Vector3.Lerp(
+                _emojiRenderer.transform.localScale, Vector3.one * emojiScale, smooth);
+
+            Vector3 dir = (mouseWorld - pieceWorld);
+            dir.z = 0f;
+            Vector3 attract = dir.normalized * (et * EmojiAttractStrength);
+            Vector3 targetPos = EmojiRestLocal + attract;
+            _emojiRenderer.transform.localPosition = Vector3.Lerp(
+                _emojiRenderer.transform.localPosition, targetPos, smooth);
+        }
     }
 
     // --- Effects ---
@@ -120,7 +194,6 @@ public class ChessPiece : MonoBehaviour
     {
         _effects.Remove(effect);
         DestroyEffectIcon(effect);
-        RefreshEffectIcons();
     }
 
     public bool HasEffect(EffectType type)
@@ -130,9 +203,6 @@ public class ChessPiece : MonoBehaviour
         return false;
     }
 
-    /// <summary>
-    /// Ticks all effects, removing expired ones. Returns list of effects that just expired.
-    /// </summary>
     public List<ChessEffect> TickEffects()
     {
         List<ChessEffect> expired = null;
@@ -146,19 +216,133 @@ public class ChessPiece : MonoBehaviour
                 _effects.RemoveAt(i);
             }
         }
-        if (expired != null) RefreshEffectIcons();
         return expired;
     }
 
-    /// <summary>
-    /// Changes the piece's team color and updates sprites.
-    /// </summary>
     public void SetColor(PieceColor newColor)
     {
         Color = newColor;
         Sprite sprite = GetSprite(PieceType, newColor);
-        _image.sprite = sprite;
-        _dropShadowImage.sprite = sprite;
+        _spriteRenderer.sprite = sprite;
+        _shadowRenderer.sprite = sprite;
+    }
+
+    // --- Fight Particles ---
+
+    public void PlayFightParticle() { if (_fightParticle != null) _fightParticle.Play(); }
+    public void StopFightParticle() { if (_fightParticle != null) _fightParticle.Stop(); }
+
+    // --- Sorting Layer ---
+
+    public void SetSortingLayer(string layerName)
+    {
+        _shadowRenderer.sortingLayerName = layerName;
+        _spriteRenderer.sortingLayerName = layerName;
+    }
+
+    // --- Element ---
+
+    public void SetElement(string element, string emoji, EmojiLoader emojiService, TMP_FontAsset font = null)
+    {
+        Element = element;
+        Emoji = emoji;
+
+        // Create emoji renderer
+        if (_emojiRenderer == null)
+        {
+            var go = new GameObject("EmojiIcon");
+            go.transform.SetParent(_spriteT, false);
+            go.transform.localPosition = EmojiRestLocal;
+
+            _emojiRenderer = go.AddComponent<SpriteRenderer>();
+            _emojiRenderer.sortingLayerName = "piece";
+            _emojiRenderer.sortingOrder = 3;
+        }
+
+        // Create element name label (hidden by default, shown on hover)
+        if (_elementLabel == null)
+        {
+            var go = new GameObject("ElementLabel");
+            go.transform.SetParent(_spriteT, false);
+            go.transform.localPosition = EmojiRestLocal;
+
+            _elementLabel = go.AddComponent<TextMeshPro>();
+            _elementLabel.fontSize = 3f;
+            _elementLabel.fontStyle = FontStyles.Bold;
+            _elementLabel.alignment = TextAlignmentOptions.Center;
+            _elementLabel.color = new UnityEngine.Color(1f, 1f, 1f, 0.95f);
+            _elementLabel.raycastTarget = false;
+            _elementLabel.sortingLayerID = SortingLayer.NameToID("piece");
+            _elementLabel.sortingOrder = 3;
+            _elementLabel.rectTransform.sizeDelta = new Vector2(4f, 0.5f);
+            _elementLabel.enableWordWrapping = false;
+            _elementLabel.overflowMode = TextOverflowModes.Overflow;
+        }
+
+        if (font != null) _elementLabel.font = font;
+
+        _elementLabel.text = element;
+        _elementLabel.gameObject.SetActive(false);
+
+        // Load emoji sprite
+        if (emojiService != null && !string.IsNullOrEmpty(emoji))
+        {
+            Sprite cached = emojiService.GetCached(emoji);
+            if (cached != null)
+            {
+                _emojiRenderer.sprite = cached;
+            }
+            else
+            {
+                _emojiRenderer.sprite = null;
+                emojiService.StartCoroutine(emojiService.Load(emoji, sprite =>
+                {
+                    if (_emojiRenderer != null)
+                    {
+                        _emojiRenderer.sprite = sprite;
+                        ShowHover(false);
+                    }
+                }));
+            }
+        }
+
+        ShowHover(false);
+    }
+
+    public void ShowHover(bool show)
+    {
+        bool hasEmoji = _emojiRenderer != null && _emojiRenderer.sprite != null;
+
+        if (_elementLabel != null)
+            _elementLabel.gameObject.SetActive(show || !hasEmoji);
+        if (_emojiRenderer != null)
+            _emojiRenderer.gameObject.SetActive(!show && hasEmoji);
+
+        // Snappy pop transition (label / emoji)
+        _labelPopTween?.Kill();
+        if (show && _elementLabel != null && _elementLabel.gameObject.activeSelf)
+        {
+            _elementLabel.transform.localScale = Vector3.one * PopScale;
+            _labelPopTween = _elementLabel.transform.DOScale(Vector3.one, PopDuration).SetEase(Ease.OutCubic);
+        }
+        else if (!show && hasEmoji)
+        {
+            _emojiRenderer.transform.localScale *= PopScale;
+        }
+
+        // Piece hover scale
+        _hoverTween?.Kill();
+        if (show)
+        {
+            _hoverBonus = PiecePopBonus;
+            _hoverTween = DOTween.To(() => _hoverBonus, x => _hoverBonus = x, PieceHoverBonus, PopDuration)
+                .SetEase(Ease.OutCubic);
+        }
+        else
+        {
+            _hoverTween = DOTween.To(() => _hoverBonus, x => _hoverBonus = x, 0f, PopDuration)
+                .SetEase(Ease.OutCubic);
+        }
     }
 
     // --- Effect Icon Rendering ---
@@ -177,25 +361,20 @@ public class ChessPiece : MonoBehaviour
         if (sprite == null) return;
 
         GameObject go = new GameObject($"EffectIcon_{effect.Type}");
-        go.transform.SetParent(_image.transform, false);
+        go.transform.SetParent(_spriteT, false);
+        go.transform.localPosition = Vector3.zero;
 
-        RectTransform rt = go.AddComponent<RectTransform>();
-        rt.anchorMin = Vector2.zero;
-        rt.anchorMax = Vector2.one;
-        rt.sizeDelta = Vector2.zero;
-        rt.anchoredPosition = Vector2.zero;
-
-        Image img = go.AddComponent<Image>();
-        img.sprite = sprite;
-        img.raycastTarget = false;
-        img.preserveAspect = true;
+        SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = sprite;
+        sr.sortingLayerName = "piece";
+        sr.sortingOrder = 2;
 
         _effectIcons[effect] = go;
 
-        Tween floatTween = rt.DOAnchorPosY(4f, 2f)
+        Tween floatTween = go.transform.DOLocalMoveY(0.06f, 2f)
             .SetEase(Ease.InOutCubic)
             .SetLoops(-1, LoopType.Yoyo)
-            .From(new Vector2(0f, -3f));
+            .From(new Vector3(0f, -0.04f, 0f));
         _effectIconTweens[effect] = floatTween;
     }
 
@@ -213,11 +392,6 @@ public class ChessPiece : MonoBehaviour
         }
     }
 
-    private void RefreshEffectIcons()
-    {
-        // Icons are full overlays, no repositioning needed
-    }
-
     private void ClearAllEffectIcons()
     {
         foreach (var kvp in _effectIconTweens)
@@ -228,9 +402,6 @@ public class ChessPiece : MonoBehaviour
         _effectIcons.Clear();
     }
 
-    /// <summary>
-    /// Returns true if the target piece can be captured (not shielded).
-    /// </summary>
     private static bool CanCapture(ChessPiece target)
     {
         return !target.HasEffect(EffectType.Shield);
@@ -283,23 +454,19 @@ public class ChessPiece : MonoBehaviour
 
     private void AddPawnMoves(int col, int row, List<int> moves, ChessPiece[] board)
     {
-        // White moves up (row decreases), Black moves down (row increases)
         int dir = (Color == PieceColor.White) ? -1 : 1;
         int startRow = (Color == PieceColor.White) ? 6 : 1;
 
-        // Forward one
         int fwdRow = row + dir;
         if (InBounds(col, fwdRow) && board[fwdRow * 8 + col] == null)
         {
             moves.Add(fwdRow * 8 + col);
 
-            // Forward two from starting row
             int fwd2Row = row + 2 * dir;
             if (row == startRow && board[fwd2Row * 8 + col] == null)
                 moves.Add(fwd2Row * 8 + col);
         }
 
-        // Diagonal captures
         foreach (int dc in new[] { -1, 1 })
         {
             int nc = col + dc;
