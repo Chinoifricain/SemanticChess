@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  }
+}
