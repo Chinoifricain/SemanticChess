@@ -14,6 +14,13 @@ public struct PieceSpriteEntry
     public Sprite blackSprite;
 }
 
+[System.Serializable]
+public struct EffectSpriteEntry
+{
+    public EffectType type;
+    public Sprite sprite;
+}
+
 public class ChessPiece : MonoBehaviour
 {
     [Header("Piece to Sprite")]
@@ -29,10 +36,18 @@ public class ChessPiece : MonoBehaviour
 
     [Header("Effects")]
     [SerializeField] private ParticleSystem _dustParticle;
+    [SerializeField] private EffectSpriteEntry[] _effectSpriteEntries;
 
     public PieceType PieceType { get; private set; }
     public PieceColor Color { get; private set; }
+    public PieceColor OriginalColor { get; private set; }
     public bool HasMoved { get; set; }
+
+    // --- Effects ---
+    private readonly List<ChessEffect> _effects = new List<ChessEffect>();
+    public IReadOnlyList<ChessEffect> Effects => _effects;
+    private readonly Dictionary<ChessEffect, GameObject> _effectIcons = new Dictionary<ChessEffect, GameObject>();
+    private readonly Dictionary<ChessEffect, Tween> _effectIconTweens = new Dictionary<ChessEffect, Tween>();
 
     private RectTransform _imageRT;
     private RectTransform _shadowRT;
@@ -45,7 +60,10 @@ public class ChessPiece : MonoBehaviour
     {
         PieceType = type;
         Color = color;
+        OriginalColor = color;
         HasMoved = false;
+        ClearAllEffectIcons();
+        _effects.Clear();
 
         Sprite sprite = GetSprite(type, color);
         _image.sprite = sprite;
@@ -88,6 +106,134 @@ public class ChessPiece : MonoBehaviour
 
         if (_dustParticle != null)
             _dustParticle.Play();
+    }
+
+    // --- Effects ---
+
+    public void AddEffect(ChessEffect effect)
+    {
+        _effects.Add(effect);
+        CreateEffectIcon(effect);
+    }
+
+    public void RemoveEffect(ChessEffect effect)
+    {
+        _effects.Remove(effect);
+        DestroyEffectIcon(effect);
+        RefreshEffectIcons();
+    }
+
+    public bool HasEffect(EffectType type)
+    {
+        for (int i = 0; i < _effects.Count; i++)
+            if (_effects[i].Type == type) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Ticks all effects, removing expired ones. Returns list of effects that just expired.
+    /// </summary>
+    public List<ChessEffect> TickEffects()
+    {
+        List<ChessEffect> expired = null;
+        for (int i = _effects.Count - 1; i >= 0; i--)
+        {
+            if (_effects[i].Tick())
+            {
+                expired ??= new List<ChessEffect>();
+                expired.Add(_effects[i]);
+                DestroyEffectIcon(_effects[i]);
+                _effects.RemoveAt(i);
+            }
+        }
+        if (expired != null) RefreshEffectIcons();
+        return expired;
+    }
+
+    /// <summary>
+    /// Changes the piece's team color and updates sprites.
+    /// </summary>
+    public void SetColor(PieceColor newColor)
+    {
+        Color = newColor;
+        Sprite sprite = GetSprite(PieceType, newColor);
+        _image.sprite = sprite;
+        _dropShadowImage.sprite = sprite;
+    }
+
+    // --- Effect Icon Rendering ---
+
+    private Sprite GetEffectSprite(EffectType type)
+    {
+        if (_effectSpriteEntries == null) return null;
+        foreach (var entry in _effectSpriteEntries)
+            if (entry.type == type) return entry.sprite;
+        return null;
+    }
+
+    private void CreateEffectIcon(ChessEffect effect)
+    {
+        Sprite sprite = GetEffectSprite(effect.Type);
+        if (sprite == null) return;
+
+        GameObject go = new GameObject($"EffectIcon_{effect.Type}");
+        go.transform.SetParent(_image.transform, false);
+
+        RectTransform rt = go.AddComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.sizeDelta = Vector2.zero;
+        rt.anchoredPosition = Vector2.zero;
+
+        Image img = go.AddComponent<Image>();
+        img.sprite = sprite;
+        img.raycastTarget = false;
+        img.preserveAspect = true;
+
+        _effectIcons[effect] = go;
+
+        Tween floatTween = rt.DOAnchorPosY(4f, 2f)
+            .SetEase(Ease.InOutCubic)
+            .SetLoops(-1, LoopType.Yoyo)
+            .From(new Vector2(0f, -3f));
+        _effectIconTweens[effect] = floatTween;
+    }
+
+    private void DestroyEffectIcon(ChessEffect effect)
+    {
+        if (_effectIconTweens.TryGetValue(effect, out Tween tween))
+        {
+            tween?.Kill();
+            _effectIconTweens.Remove(effect);
+        }
+        if (_effectIcons.TryGetValue(effect, out GameObject go))
+        {
+            if (go != null) Object.Destroy(go);
+            _effectIcons.Remove(effect);
+        }
+    }
+
+    private void RefreshEffectIcons()
+    {
+        // Icons are full overlays, no repositioning needed
+    }
+
+    private void ClearAllEffectIcons()
+    {
+        foreach (var kvp in _effectIconTweens)
+            kvp.Value?.Kill();
+        _effectIconTweens.Clear();
+        foreach (var kvp in _effectIcons)
+            if (kvp.Value != null) Object.Destroy(kvp.Value);
+        _effectIcons.Clear();
+    }
+
+    /// <summary>
+    /// Returns true if the target piece can be captured (not shielded).
+    /// </summary>
+    private static bool CanCapture(ChessPiece target)
+    {
+        return !target.HasEffect(EffectType.Shield);
     }
 
     private Sprite GetSprite(PieceType type, PieceColor color)
@@ -160,7 +306,7 @@ public class ChessPiece : MonoBehaviour
             if (InBounds(nc, fwdRow))
             {
                 ChessPiece target = board[fwdRow * 8 + nc];
-                if (target != null && target.Color != Color)
+                if (target != null && target.Color != Color && CanCapture(target))
                     moves.Add(fwdRow * 8 + nc);
             }
         }
@@ -174,7 +320,9 @@ public class ChessPiece : MonoBehaviour
             if (!InBounds(nc, nr)) continue;
 
             ChessPiece target = board[nr * 8 + nc];
-            if (target == null || target.Color != Color)
+            if (target == null)
+                moves.Add(nr * 8 + nc);
+            else if (target.Color != Color && CanCapture(target))
                 moves.Add(nr * 8 + nc);
         }
     }
@@ -193,7 +341,7 @@ public class ChessPiece : MonoBehaviour
                 }
                 else
                 {
-                    if (board[idx].Color != Color)
+                    if (board[idx].Color != Color && CanCapture(board[idx]))
                         moves.Add(idx);
                     break;
                 }
@@ -211,7 +359,9 @@ public class ChessPiece : MonoBehaviour
             if (!InBounds(nc, nr)) continue;
 
             ChessPiece target = board[nr * 8 + nc];
-            if (target == null || target.Color != Color)
+            if (target == null)
+                moves.Add(nr * 8 + nc);
+            else if (target.Color != Color && CanCapture(target))
                 moves.Add(nr * 8 + nc);
         }
     }

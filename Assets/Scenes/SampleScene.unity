@@ -3187,6 +3187,16 @@ MonoBehaviour:
   _tileContainer: {fileID: 1431559095}
   _piecePrefab: {fileID: 9220845557242403241, guid: 4f44d4fcac9a92e43b588c95985a2302, type: 3}
   _moveIndicatorSprite: {fileID: 21300000, guid: 7f2e0b5f95e9ae446a619b10bdc30c54, type: 3}
+  _tileEffectSprites:
+  - type: 0
+    sprite: {fileID: 21300000, guid: bd1dcc988830eca489dbe398fd5b361a, type: 3}
+  - type: 1
+    sprite: {fileID: 21300000, guid: e0a7b2f39fb7d6344819dffa1d707151, type: 3}
+  - type: 2
+    sprite: {fileID: 21300000, guid: 92139e1e95f48ae409aed3c4ee2c5b80, type: 3}
+  - type: 3
+    sprite: {fileID: 21300000, guid: 9e2c66c3a0935914ba08227a27221dcc, type: 3}
+  _floatingTextFont: {fileID: 11400000, guid: 4c1532495f9682446ada64579d071ca8, type: 2}
 --- !u!1001 &937306511
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -3468,7 +3478,7 @@ Canvas:
   m_OverridePixelPerfect: 0
   m_SortingBucketNormalizedSize: 0
   m_VertexColorAlwaysGammaSpace: 0
-  m_AdditionalShaderChannelsFlag: 0
+  m_AdditionalShaderChannelsFlag: 25
   m_UpdateRectTransformForStandalone: 0
   m_SortingLayerID: 0
   m_SortingOrder: 0
