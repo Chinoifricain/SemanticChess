@@ -50,6 +50,8 @@ public class ChessPiece : MonoBehaviour
     private TextMeshPro _elementLabel;
     private SpriteRenderer _emojiRenderer;
     private Tween _labelPopTween;
+    private bool _revealPlaying;
+    private Sequence _revealSequence;
     private static readonly Vector3 EmojiRestLocal = new Vector3(0f, 0.45f, 0f);
     private const float EmojiRadius = 6f;
     private const float EmojiMinScale = 0.4f;
@@ -165,7 +167,7 @@ public class ChessPiece : MonoBehaviour
         transform.localScale = Vector3.one * (1f + _hoverBonus);
 
         // --- Emoji proximity scaling + attraction ---
-        if (_emojiRenderer != null && _emojiRenderer.sprite != null && _emojiRenderer.gameObject.activeSelf)
+        if (_emojiRenderer != null && _emojiRenderer.sprite != null && _emojiRenderer.gameObject.activeSelf && !_revealPlaying)
         {
             float et = 1f - Mathf.Clamp01(dist / EmojiRadius);
 
@@ -300,7 +302,8 @@ public class ChessPiece : MonoBehaviour
                     if (_emojiRenderer != null)
                     {
                         _emojiRenderer.sprite = sprite;
-                        ShowHover(false);
+                        if (!_revealPlaying)
+                            ShowHover(false);
                     }
                 }));
             }
@@ -342,6 +345,53 @@ public class ChessPiece : MonoBehaviour
         {
             _hoverTween = DOTween.To(() => _hoverBonus, x => _hoverBonus = x, 0f, PopDuration)
                 .SetEase(Ease.OutCubic);
+        }
+    }
+
+    // --- Element Reveal Animation ---
+
+    public void HideElement()
+    {
+        _revealSequence?.Kill();
+        _revealSequence = null;
+        _revealPlaying = false;
+
+        if (_emojiRenderer != null)
+            _emojiRenderer.gameObject.SetActive(false);
+        if (_elementLabel != null)
+            _elementLabel.gameObject.SetActive(false);
+    }
+
+    public void RevealNewElement()
+    {
+        _revealSequence?.Kill();
+        _revealSequence = null;
+        _revealPlaying = true;
+
+        // Always show text label, hide emoji
+        if (_emojiRenderer != null)
+            _emojiRenderer.gameObject.SetActive(false);
+
+        if (_elementLabel != null)
+        {
+            _elementLabel.gameObject.SetActive(true);
+            _elementLabel.color = new Color(_elementLabel.color.r, _elementLabel.color.g, _elementLabel.color.b, 0f);
+            _elementLabel.transform.localScale = Vector3.one * 5f;
+
+            _revealSequence = DOTween.Sequence();
+            _revealSequence.Append(_elementLabel.DOFade(0.95f, 0.3f).SetEase(Ease.InOutQuad));
+            _revealSequence.Join(_elementLabel.transform.DOScale(Vector3.one, 0.5f).SetEase(Ease.OutBack));
+            _revealSequence.AppendInterval(1f);
+            _revealSequence.OnComplete(() =>
+            {
+                _revealSequence = null;
+                _revealPlaying = false;
+                ShowHover(false);
+            });
+        }
+        else
+        {
+            _revealPlaying = false;
         }
     }
 

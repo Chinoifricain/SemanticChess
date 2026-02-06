@@ -55,6 +55,11 @@ public class ChessBoard : MonoBehaviour
     private readonly int[] _burningTurnCount = new int[64];
     private readonly Dictionary<TileEffect, GameObject> _tileEffectVisuals = new Dictionary<TileEffect, GameObject>();
 
+    // --- Board attraction ---
+    private const float BoardAttractRadius = 12f;
+    private const float BoardAttractStrength = 0.03f;
+    private Vector3 _boardRestPos;
+
     private PieceColor _currentTurn = PieceColor.White;
     private int _selectedIndex = -1;
     private readonly List<int> _validMoves = new List<int>();
@@ -65,6 +70,7 @@ public class ChessBoard : MonoBehaviour
     private void Start()
     {
         _cam = Camera.main;
+        _boardRestPos = transform.position;
 
         for (int i = 0; i < 64; i++)
             _tileEffects[i] = new List<TileEffect>();
@@ -88,21 +94,25 @@ public class ChessBoard : MonoBehaviour
         {
             int col = i % 8;
             int row = i / 8;
-            _tilePositions[i] = new Vector3(
+            Vector3 worldPos = new Vector3(
                 topLeft.x + (col + 0.5f) * _tileSize,
                 topLeft.y - (row + 0.5f) * _tileSize,
                 0f);
+            _tilePositions[i] = transform.InverseTransformPoint(worldPos);
         }
     }
 
-    public Vector3 GetTilePosition(int index) => _tilePositions[index];
+    public Vector3 GetTilePosition(int index) => transform.TransformPoint(_tilePositions[index]);
     public float TileSize => _tileSize;
 
     // --- Input ---
 
     private void Update()
     {
-        UpdateHover();
+        UpdateBoardAttraction();
+
+        if (!_isMoving)
+            UpdateHover();
 
         if (_isMoving) return;
         if (!Input.GetMouseButtonDown(0)) return;
@@ -116,6 +126,22 @@ public class ChessBoard : MonoBehaviour
 
         if (col >= 0 && col < 8 && row >= 0 && row < 8)
             OnTileClicked(row * 8 + col);
+    }
+
+    private void UpdateBoardAttraction()
+    {
+        Vector3 mouseWorld = _cam.ScreenToWorldPoint(Input.mousePosition);
+        mouseWorld.z = 0f;
+
+        Vector3 toMouse = mouseWorld - _boardRestPos;
+        toMouse.z = 0f;
+        float dist = toMouse.magnitude;
+
+        float t = 1f - Mathf.Clamp01(dist / BoardAttractRadius);
+        Vector3 offset = toMouse.normalized * (t * BoardAttractStrength);
+
+        float smooth = Time.deltaTime * 8f;
+        transform.position = Vector3.Lerp(transform.position, _boardRestPos + offset, smooth);
     }
 
     private void UpdateHover()
@@ -170,8 +196,8 @@ public class ChessBoard : MonoBehaviour
 
     private void SpawnPiece(int index, PieceType type, PieceColor color)
     {
-        GameObject go = Instantiate(_piecePrefab);
-        go.transform.position = _tilePositions[index];
+        GameObject go = Instantiate(_piecePrefab, transform);
+        go.transform.localPosition = _tilePositions[index];
 
         ChessPiece piece = go.GetComponent<ChessPiece>();
         piece.Init(type, color);
@@ -243,6 +269,11 @@ public class ChessBoard : MonoBehaviour
     {
         _isMoving = true;
 
+        // Clear hover so ShowHover won't re-enable elements during fight
+        if (_hoveredIndex >= 0 && _board[_hoveredIndex] != null)
+            _board[_hoveredIndex].ShowHover(false);
+        _hoveredIndex = -1;
+
         ChessPiece piece = _board[from];
         bool isCapture = _board[to] != null && !_board[to].HasEffect(EffectType.Shield);
 
@@ -264,6 +295,11 @@ public class ChessBoard : MonoBehaviour
         string atkElem = attacker.Element;
         string defElem = defender.Element;
 
+        // Hide elements during fight
+        attacker.HideElement();
+        defender.HideElement();
+
+        // Fight particles while waiting for API
         attacker.PlayFightParticle();
 
         ElementMixResult result = null;
@@ -282,17 +318,26 @@ public class ChessBoard : MonoBehaviour
             };
         }
 
+        // Determine outcome
+        bool isDraw = result.winningElement == "draw" || string.IsNullOrEmpty(result.winningElement);
+        bool attackerWins = !isDraw && string.Equals(result.winningElement, atkElem, System.StringComparison.OrdinalIgnoreCase);
+
+        // Trade result text animation
+        float tradeDuration = PlayTradeResultText(to, attackerWins, isDraw);
+        yield return new WaitForSeconds(tradeDuration);
+
+        // Resolve capture
         Destroy(defender.gameObject);
         _board[to] = attacker;
         _board[from] = null;
         attacker.HasMoved = true;
         attacker.Deselect();
 
+        // Reveal new element
         attacker.SetElement(result.newElement, result.emoji, _emojiService, _floatingTextFont);
+        attacker.RevealNewElement();
 
-        SpawnMixText(to, result, atkElem, defElem);
-
-        yield return new WaitForSeconds(1.5f);
+        yield return new WaitForSeconds(1.8f);
 
         if (TileHasEffect(to, TileEffectType.Ice))
         {
@@ -314,6 +359,73 @@ public class ChessBoard : MonoBehaviour
 
         _isMoving = false;
         ToggleTurn();
+    }
+
+    private float PlayTradeResultText(int index, bool attackerWins, bool isDraw)
+    {
+        Vector3 pos = _tilePositions[index];
+
+        string text;
+        Color textColor;
+        if (isDraw)
+        {
+            text = "Even Trade";
+            textColor = new Color(0.8f, 0.8f, 0.8f);
+        }
+        else if (attackerWins)
+        {
+            text = "Trade Won!";
+            textColor = new Color(0.3f, 1f, 0.3f);
+        }
+        else
+        {
+            text = "Trade Lost...";
+            textColor = new Color(1f, 0.5f, 0.3f);
+        }
+
+        GameObject go = new GameObject("TradeResultText");
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = pos;
+        go.transform.localScale = Vector3.one * 1.5f;
+
+        TextMeshPro label = go.AddComponent<TextMeshPro>();
+        label.rectTransform.sizeDelta = new Vector2(5f, 1f);
+        label.text = text;
+        if (_floatingTextFont != null) label.font = _floatingTextFont;
+        label.fontSize = 5f;
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = TextAlignmentOptions.Center;
+        label.color = new Color(textColor.r, textColor.g, textColor.b, 0f);
+        label.raycastTarget = false;
+        label.sortingLayerID = SortingLayer.NameToID("front");
+        label.sortingOrder = 2;
+
+        bool useLostAnim = !isDraw && !attackerWins;
+
+        Sequence seq = DOTween.Sequence();
+
+        // Fade in
+        seq.Append(label.DOFade(1f, 0.3f).SetEase(Ease.InOutQuad));
+
+        if (useLostAnim)
+        {
+            // Lost: scale 1.5 -> 1 with InCubic, then shake at impact
+            seq.Join(go.transform.DOScale(1f, 0.6f).SetEase(Ease.InCubic));
+            seq.Append(go.transform.DOShakePosition(0.5f, 0.15f, 14, 90f, false, true));
+        }
+        else
+        {
+            // Won/Draw: scale 1.5 -> 1 with OutBack, then hold
+            seq.Join(go.transform.DOScale(1f, 0.6f).SetEase(Ease.OutBack));
+            seq.AppendInterval(0.5f);
+        }
+
+        // Fade out + scale to 0
+        seq.Append(label.DOFade(0f, 0.3f).SetEase(Ease.InQuad));
+        seq.Join(go.transform.DOScale(0f, 0.3f).SetEase(Ease.InQuad));
+        seq.OnComplete(() => Destroy(go));
+
+        return seq.Duration();
     }
 
     private void FinishMove(int from, int to, ChessPiece piece)
@@ -349,7 +461,7 @@ public class ChessBoard : MonoBehaviour
     {
         piece.SetSortingLayer("front");
 
-        piece.transform.DOMove(_tilePositions[tileIndex], duration).SetEase(Ease.OutCubic).OnComplete(() =>
+        piece.transform.DOLocalMove(_tilePositions[tileIndex], duration).SetEase(Ease.OutCubic).OnComplete(() =>
         {
             piece.SetSortingLayer("piece");
             onComplete?.Invoke();
@@ -592,7 +704,8 @@ public class ChessBoard : MonoBehaviour
         foreach (int idx in _validMoves)
         {
             GameObject dot = new GameObject("MoveIndicator");
-            dot.transform.position = _tilePositions[idx];
+            dot.transform.SetParent(transform, false);
+            dot.transform.localPosition = _tilePositions[idx];
             dot.transform.localScale = Vector3.zero;
 
             SpriteRenderer sr = dot.AddComponent<SpriteRenderer>();
@@ -647,7 +760,8 @@ public class ChessBoard : MonoBehaviour
         if (sprite == null) return;
 
         GameObject go = new GameObject($"TileEffect_{effect.Type}");
-        go.transform.position = _tilePositions[index];
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = _tilePositions[index];
 
         SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
         sr.sprite = sprite;
@@ -673,7 +787,8 @@ public class ChessBoard : MonoBehaviour
         Vector3 pos = _tilePositions[index];
 
         GameObject go = new GameObject("FloatingText");
-        go.transform.position = pos;
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = pos;
 
         TextMeshPro label = go.AddComponent<TextMeshPro>();
         label.rectTransform.sizeDelta = new Vector2(3f, 0.5f);
@@ -687,7 +802,7 @@ public class ChessBoard : MonoBehaviour
         label.sortingLayerID = SortingLayer.NameToID("front");
         label.sortingOrder = 1;
 
-        go.transform.DOMoveY(pos.y + _tileSize * 0.6f, 0.6f).SetEase(Ease.OutCubic);
+        go.transform.DOLocalMoveY(pos.y + _tileSize * 0.6f, 0.6f).SetEase(Ease.OutCubic);
         label.DOFade(0f, 0.6f).SetEase(Ease.InCubic).OnComplete(() => Destroy(go));
     }
 
@@ -716,10 +831,11 @@ public class ChessBoard : MonoBehaviour
         SpawnFloatingTextStyled(_tilePositions[index], winText, winColor, 0.25f, -_tileSize * 0.2f);
     }
 
-    private void SpawnFloatingTextStyled(Vector3 pos, string text, Color color, float delay, float yOffset)
+    private void SpawnFloatingTextStyled(Vector3 localPos, string text, Color color, float delay, float yOffset)
     {
         GameObject go = new GameObject("FloatingText");
-        go.transform.position = pos + new Vector3(0f, yOffset, 0f);
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = localPos + new Vector3(0f, yOffset, 0f);
 
         TextMeshPro label = go.AddComponent<TextMeshPro>();
         label.rectTransform.sizeDelta = new Vector2(3f, 0.5f);
@@ -737,7 +853,7 @@ public class ChessBoard : MonoBehaviour
         seq.AppendInterval(delay);
         seq.Append(label.DOFade(1f, 0.15f));
         seq.AppendInterval(0.8f);
-        seq.Append(go.transform.DOMoveY(go.transform.position.y + _tileSize * 0.4f, 0.5f).SetEase(Ease.OutCubic));
+        seq.Append(go.transform.DOLocalMoveY(go.transform.localPosition.y + _tileSize * 0.4f, 0.5f).SetEase(Ease.OutCubic));
         seq.Join(label.DOFade(0f, 0.5f).SetEase(Ease.InCubic));
         seq.OnComplete(() => Destroy(go));
     }
