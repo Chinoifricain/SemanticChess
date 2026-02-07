@@ -99,6 +99,7 @@ public class ChessBoard : MonoBehaviour
     public SpriteRenderer BoardSprite => _boardSprite;
     public bool IsFlipped => _flipped;
     public ElementService ElementService => _elementService;
+    public ChessPiece GetPieceAt(int index) => (index >= 0 && index < 64) ? _board[index] : null;
 
     // --- Events ---
     public event Action<PieceColor> OnTurnChanged;

@@ -91,9 +91,9 @@ Example 7 -- ""Hex"", Knight, major:
 Reasoning: chaotic L-shape curse transforms pieces, caster gets shield
 {{""effects"":[{{""pattern"":""L"",""distance"":1,""obstructed"":false,""target"":""debuff"",""effect"":""Transform"",""piece_type"":""Pawn"",""duration"":3}},{{""pattern"":""area"",""distance"":0,""obstructed"":false,""target"":""buff"",""effect"":""Shield"",""duration"":2}}],""flavor"":""A curse warps their form!""}}
 
-Flavor: punchy 3-6 words with ""!"" — e.g. ""Storm hurls foes aside!"", ""Vines snare the path!""
+Flavor: a vivid 1-2 sentence narration of what happens — describe the elemental spectacle and its impact on the battlefield. e.g. ""A violent storm erupts from the collision, hurling nearby pieces across the board!"", ""Thick vines burst from the ground, snaring everything in their thorny grip!""
 Return ONLY valid JSON, no markdown:
-{{""effects"":[{{""pattern"":""+"",""distance"":2,""obstructed"":true,""target"":""debuff"",""effect"":""Stun"",""duration"":2}}],""flavor"":""Element does something!""}}";
+{{""effects"":[{{""pattern"":""+"",""distance"":2,""obstructed"":true,""target"":""debuff"",""effect"":""Stun"",""duration"":2}}],""flavor"":""Element does something dramatic and interesting!""}}";
     }
 
     public static string BuildCombinedPrompt(string attacker, string defender, ReactionContext ctx)
@@ -142,9 +142,9 @@ Examples (piece + element = unique pattern):
 ""Venom"" Bishop: {{""effects"":[{{""pattern"":""x"",""distance"":2,""obstructed"":true,""target"":""debuff"",""effect"":""Poison"",""duration"":3}}],""flavor"":""Venom seeps through!""}}
 ""Hex"" Knight: {{""effects"":[{{""pattern"":""L"",""distance"":1,""obstructed"":false,""target"":""debuff"",""effect"":""Transform"",""piece_type"":""Pawn"",""duration"":3}},{{""pattern"":""area"",""distance"":0,""obstructed"":false,""target"":""buff"",""effect"":""Shield"",""duration"":2}}],""flavor"":""A curse warps their form!""}}
 
-Flavor: punchy 3-6 words with ""!"" — e.g. ""Storm hurls foes aside!"", ""Vines snare the path!""
+Flavor: a vivid 1-2 sentence narration of what happens — describe the elemental spectacle and its impact on the battlefield. e.g. ""A violent storm erupts from the collision, hurling nearby pieces across the board!"", ""Thick vines burst from the ground, snaring everything in their thorny grip!""
 Return ONLY valid JSON, no markdown:
-{{""mix"":{{""newElement"":""name"",""emoji"":""emoji"",""winningElement"":""{attacker}"" or ""{defender}"" or ""draw"",""reasoning"":""brief""}},""reaction"":{{""effects"":[{{""pattern"":""+"",""distance"":2,""obstructed"":true,""target"":""debuff"",""effect"":""Stun"",""duration"":2}}],""flavor"":""Element does something!""}}}}";
+{{""mix"":{{""newElement"":""name"",""emoji"":""emoji"",""winningElement"":""{attacker}"" or ""{defender}"" or ""draw"",""reasoning"":""brief""}},""reaction"":{{""effects"":[{{""pattern"":""+"",""distance"":2,""obstructed"":true,""target"":""debuff"",""effect"":""Stun"",""duration"":2}}],""flavor"":""Element does something dramatic and interesting!""}}}}";
     }
 
     public static string BuildChessMovePrompt(string boardState, string candidateMoves)
