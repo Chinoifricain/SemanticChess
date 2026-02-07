@@ -1,4 +1,4 @@
-public enum EffectType { Damage, Stun, Push, Shield, Swap, Convert }
+public enum EffectType { Damage, Stun, Push, Shield, Convert, Poison, Transform, Burning, Plant }
 
 [System.Serializable]
 public class ChessEffect
@@ -11,8 +11,8 @@ public class ChessEffect
     public int PushDirRow; // -1, 0, or 1
     public int PushDistance;
 
-    // Swap params
-    public int SwapTargetIndex = -1; // board index to swap with
+    // Transform params
+    public PieceType TransformTarget;
 
     public ChessEffect(EffectType type, int duration = -1)
     {

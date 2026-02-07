@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(git init:*)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(grep:*)",
+      "Bash(for:*)",
+      "Bash(do)",
+      "Bash(done)",
+      "Bash(powershell -Command \"Get-Content ''Assets\\\\TextMesh Pro\\\\Sprites\\\\EmojiOne.json'' | Select-String ''\"\"filename\"\"'' | ForEach-Object { $_Line.Trim\\(\\) }\")"
     ]
   }
 }

@@ -6,18 +6,18 @@ public class ChessEffectDebugWindow : EditorWindow
 {
     private ChessBoard _chessBoard;
     private int _selectedIndex = -1;
-    private int _swapTargetIndex = -1;
     private EffectType _selectedEffect = EffectType.Stun;
     private int _duration = 3;
     private int _pushDirCol;
     private int _pushDirRow = -1;
     private int _pushDistance = 1;
-    private bool _pickingSwapTarget;
+    private PieceType _transformTarget = PieceType.Pawn;
     private Vector2 _scrollPos;
 
     // Tile effects
     private TileEffectType _selectedTileEffect = TileEffectType.Burning;
     private int _tileDuration = -1;
+    private PieceColor _tileOwnerColor = PieceColor.White;
     private int _mode; // 0 = piece effects, 1 = tile effects
 
     private static readonly string[] PieceLetters = { "P", "N", "B", "R", "Q", "K" };
@@ -91,8 +91,7 @@ public class ChessEffectDebugWindow : EditorWindow
 
     private void DrawBoardGrid()
     {
-        EditorGUILayout.LabelField(_pickingSwapTarget ? "Click swap target:" : "Select a tile:",
-            EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("Select a tile:", EditorStyles.boldLabel);
 
         for (int row = 0; row < 8; row++)
         {
@@ -111,7 +110,6 @@ public class ChessEffectDebugWindow : EditorWindow
                 string label = tileLabel.Length > 0 ? $"{pieceLabel}\n{tileLabel}" : pieceLabel;
 
                 bool isSelected = idx == _selectedIndex;
-                bool isSwapTarget = idx == _swapTargetIndex;
 
                 GUIStyle style = new GUIStyle(EditorStyles.miniButton);
                 style.fontSize = 9;
@@ -120,11 +118,6 @@ public class ChessEffectDebugWindow : EditorWindow
                 if (isSelected)
                 {
                     style.normal.textColor = new Color(0.2f, 0.8f, 1f);
-                    style.fontStyle = FontStyle.Bold;
-                }
-                else if (isSwapTarget)
-                {
-                    style.normal.textColor = new Color(1f, 0.9f, 0.2f);
                     style.fontStyle = FontStyle.Bold;
                 }
                 else if (tileLabel.Length > 0)
@@ -137,16 +130,7 @@ public class ChessEffectDebugWindow : EditorWindow
 
                 if (GUILayout.Button(label, style, GUILayout.Width(36), GUILayout.Height(32)))
                 {
-                    if (_pickingSwapTarget)
-                    {
-                        _swapTargetIndex = idx;
-                        _pickingSwapTarget = false;
-                    }
-                    else
-                    {
-                        _selectedIndex = idx;
-                        _swapTargetIndex = -1;
-                    }
+                    _selectedIndex = idx;
                 }
             }
             EditorGUILayout.EndHorizontal();
@@ -199,8 +183,8 @@ public class ChessEffectDebugWindow : EditorWindow
     {
         if (_selectedEffect == EffectType.Push)
             DrawPushParams();
-        else if (_selectedEffect == EffectType.Swap)
-            DrawSwapParams();
+        if (_selectedEffect == EffectType.Transform)
+            _transformTarget = (PieceType)EditorGUILayout.EnumPopup("Target Type", _transformTarget);
     }
 
     private void DrawPushParams()
@@ -242,16 +226,6 @@ public class ChessEffectDebugWindow : EditorWindow
 
         _pushDistance = EditorGUILayout.IntField("Distance", _pushDistance);
         if (_pushDistance < 1) _pushDistance = 1;
-    }
-
-    private void DrawSwapParams()
-    {
-        EditorGUILayout.BeginHorizontal();
-        string targetLabel = _swapTargetIndex >= 0 ? $"Tile {_swapTargetIndex}" : "None";
-        EditorGUILayout.LabelField($"Swap target: {targetLabel}");
-        if (GUILayout.Button("Pick", GUILayout.Width(50)))
-            _pickingSwapTarget = true;
-        EditorGUILayout.EndHorizontal();
     }
 
     private void DrawApplyButton()
@@ -300,9 +274,10 @@ public class ChessEffectDebugWindow : EditorWindow
             effect.PushDirRow = _pushDirRow;
             effect.PushDistance = _pushDistance;
         }
-        else if (_selectedEffect == EffectType.Swap)
+
+        if (_selectedEffect == EffectType.Transform)
         {
-            effect.SwapTargetIndex = _swapTargetIndex;
+            effect.TransformTarget = _transformTarget;
         }
 
         _chessBoard.ApplyEffect(_selectedIndex, effect);
@@ -322,12 +297,14 @@ public class ChessEffectDebugWindow : EditorWindow
         EditorGUILayout.LabelField("(-1 = permanent)", GUILayout.Width(110));
         EditorGUILayout.EndHorizontal();
 
+        _tileOwnerColor = (PieceColor)EditorGUILayout.EnumPopup("Owner", _tileOwnerColor);
+
         EditorGUILayout.Space(8);
 
         GUI.enabled = _selectedIndex >= 0;
         if (GUILayout.Button("Add Tile Effect", GUILayout.Height(28)))
         {
-            _chessBoard.AddTileEffect(_selectedIndex, new TileEffect(_selectedTileEffect, _tileDuration));
+            _chessBoard.AddTileEffect(_selectedIndex, new TileEffect(_selectedTileEffect, _tileDuration, _tileOwnerColor));
         }
         GUI.enabled = true;
 
@@ -353,7 +330,8 @@ public class ChessEffectDebugWindow : EditorWindow
         {
             EditorGUILayout.BeginHorizontal();
             string durLabel = effect.Duration < 0 ? "perm" : $"{effect.Duration}t";
-            EditorGUILayout.LabelField($"  {effect.Type} ({durLabel})");
+            string owner = effect.OwnerColor == PieceColor.White ? "W" : "B";
+            EditorGUILayout.LabelField($"  {effect.Type} ({durLabel}, {owner})");
             if (GUILayout.Button("X", GUILayout.Width(22)))
                 toRemove = effect;
             EditorGUILayout.EndHorizontal();

@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 using DG.Tweening;
 using TMPro;
 using UnityEngine;
@@ -24,6 +25,9 @@ public class ChessBoard : MonoBehaviour
     [Header("Tile Effect Sprites")]
     [SerializeField] private TileEffectSpriteEntry[] _tileEffectSprites;
 
+    [Header("Effects")]
+    [SerializeField] private ParticleSystem _effectHitPrefab;
+
     [Header("Floating Text")]
     [SerializeField] private TMP_FontAsset _floatingTextFont;
 
@@ -39,20 +43,23 @@ public class ChessBoard : MonoBehaviour
     private ElementService _elementService;
     private EmojiLoader _emojiService;
 
-    private static readonly string[] BackRankElements = { "Water", "Fire", "Plant", "Fire", "Water", "Plant", "Fire", "Water" };
-    private static readonly string[] PawnElements =     { "Fire", "Plant", "Water", "Fire", "Plant", "Water", "Fire", "Plant" };
+    private static readonly string[] BackRankElements = { "Water", "Fire", "Plant", "Air", "Water", "Plant", "Fire", "Air" };
+    private static readonly string[] PawnElements =     { "Fire", "Plant", "Water", "Air", "Fire", "Plant", "Water", "Air" };
 
     private static readonly Dictionary<string, string> BaseEmojis = new()
     {
         { "Fire",  "\U0001F525" }, // 🔥
         { "Water", "\U0001F4A7" }, // 💧
         { "Plant", "\U0001F33F" }, // 🌿
+        { "Air",   "\U0001F4A8" }, // 💨
     };
 
     // --- Tile Effects ---
     private readonly List<TileEffect>[] _tileEffects = new List<TileEffect>[64];
     private readonly ChessPiece[] _tileOccupant = new ChessPiece[64];
     private readonly int[] _burningTurnCount = new int[64];
+    private readonly ChessPiece[] _plantOccupant = new ChessPiece[64];
+    private readonly int[] _plantTurnCount = new int[64];
     private readonly Dictionary<TileEffect, GameObject> _tileEffectVisuals = new Dictionary<TileEffect, GameObject>();
 
     // --- Board attraction ---
@@ -65,6 +72,8 @@ public class ChessBoard : MonoBehaviour
     private readonly List<int> _validMoves = new List<int>();
     private readonly List<GameObject> _indicators = new List<GameObject>();
     private bool _isMoving;
+    private bool _isPlayingReaction;
+    private bool _gameOver;
     private int _hoveredIndex = -1;
 
     private void Start()
@@ -109,12 +118,18 @@ public class ChessBoard : MonoBehaviour
 
     private void Update()
     {
+        // Hold click to fast-forward during reaction effects
+        if (_isPlayingReaction && Input.GetMouseButton(0))
+            Time.timeScale = 4f;
+        else if (Time.timeScale != 1f)
+            Time.timeScale = 1f;
+
         UpdateBoardAttraction();
 
-        if (!_isMoving)
+        if (!_isMoving && !_gameOver)
             UpdateHover();
 
-        if (_isMoving) return;
+        if (_isMoving || _gameOver) return;
         if (!Input.GetMouseButtonDown(0)) return;
 
         Vector3 world = _cam.ScreenToWorldPoint(Input.mousePosition);
@@ -260,7 +275,7 @@ public class ChessBoard : MonoBehaviour
         _selectedIndex = index;
         piece.Select();
         _validMoves.Clear();
-        _validMoves.AddRange(piece.GetPossibleMoves(index, _board));
+        _validMoves.AddRange(GetLegalMoves(index));
         _validMoves.RemoveAll(i => TileHasEffect(i, TileEffectType.Occupied));
         ShowIndicators();
     }
@@ -294,22 +309,57 @@ public class ChessBoard : MonoBehaviour
     {
         string atkElem = attacker.Element;
         string defElem = defender.Element;
+        PieceType defenderType = defender.PieceType;
+
+        // Build reaction context before capture changes the board
+        int combinedPower = GetPieceValue(attacker.PieceType) + GetPieceValue(defenderType);
+        var (nearbyEnemies, nearbyFriendlies) = CountNearbyPieces(to, attacker.Color);
+        var reactionCtx = new ReactionContext
+        {
+            CaptureSquare = IndexToAlgebraic(to),
+            PieceType = attacker.PieceType.ToString(),
+            PieceColor = attacker.Color.ToString(),
+            CombinedPower = combinedPower,
+            PowerTier = GetPowerTier(combinedPower),
+            AttackerElement = atkElem,
+            DefenderElement = defElem,
+            NearbyEnemies = nearbyEnemies,
+            NearbyFriendlies = nearbyFriendlies
+        };
 
         // Hide elements during fight
         attacker.HideElement();
         defender.HideElement();
-
-        // Fight particles while waiting for API
         attacker.PlayFightParticle();
+        GameObject fightTitle = SpawnFightTitle(to, atkElem, defElem);
 
-        ElementMixResult result = null;
-        yield return _elementService.GetElementMix(atkElem, defElem, r => result = r);
+        ElementMixResult mixResult = null;
+        ElementReactionResult reactionResult = null;
+        bool mixWasCached = _elementService.HasCachedMix(atkElem, defElem);
+
+        if (mixWasCached)
+        {
+            // Path B: cached mix — get it instantly, fire reaction call in background
+            yield return _elementService.GetElementMix(atkElem, defElem, r => mixResult = r);
+
+            StartCoroutine(_elementService.GetElementReaction(
+                mixResult, reactionCtx,
+                r => reactionResult = r));
+        }
+        else
+        {
+            // Path A: combined mix + reaction in one API call
+            yield return _elementService.GetElementMixAndReaction(
+                atkElem, defElem, reactionCtx,
+                (mix, reaction) => { mixResult = mix; reactionResult = reaction; });
+        }
 
         attacker.StopFightParticle();
+        DismissFightTitle(fightTitle);
 
-        if (result == null)
+        if (mixResult == null)
         {
-            result = new ElementMixResult
+            mixResult = new ElementMixResult
             {
                 newElement = atkElem,
                 emoji = attacker.Emoji,
@@ -319,8 +369,8 @@ public class ChessBoard : MonoBehaviour
         }
 
         // Determine outcome
-        bool isDraw = result.winningElement == "draw" || string.IsNullOrEmpty(result.winningElement);
-        bool attackerWins = !isDraw && string.Equals(result.winningElement, atkElem, System.StringComparison.OrdinalIgnoreCase);
+        bool isDraw = mixResult.winningElement == "draw" || string.IsNullOrEmpty(mixResult.winningElement);
+        bool attackerWins = !isDraw && string.Equals(mixResult.winningElement, atkElem, System.StringComparison.OrdinalIgnoreCase);
 
         // Trade result text animation
         float tradeDuration = PlayTradeResultText(to, attackerWins, isDraw);
@@ -334,11 +384,31 @@ public class ChessBoard : MonoBehaviour
         attacker.Deselect();
 
         // Reveal new element
-        attacker.SetElement(result.newElement, result.emoji, _emojiService, _floatingTextFont);
+        attacker.SetElement(mixResult.newElement, mixResult.emoji, _emojiService, _floatingTextFont);
         attacker.RevealNewElement();
 
         yield return new WaitForSeconds(1.8f);
 
+        // Wait for reaction if the background call is still in progress
+        if (reactionResult == null && mixWasCached)
+        {
+            float timeout = 10f, waited = 0f;
+            while (reactionResult == null && waited < timeout)
+            {
+                yield return null;
+                waited += Time.deltaTime;
+            }
+        }
+
+        // Fallback if no reaction was produced
+        if (reactionResult == null)
+            reactionResult = GenerateFallbackReaction(to, attacker, attackerWins, isDraw);
+
+        // Apply elemental reaction effects
+        string tradeOutcome = isDraw ? "draw" : (attackerWins ? "won" : "lost");
+        yield return StartCoroutine(ApplyReaction(to, reactionResult, attacker.Color, tradeOutcome));
+
+        // Ice slide check
         if (TileHasEffect(to, TileEffectType.Ice))
         {
             int dirCol = System.Math.Sign((to % 8) - (from % 8));
@@ -397,7 +467,7 @@ public class ChessBoard : MonoBehaviour
         label.alignment = TextAlignmentOptions.Center;
         label.color = new Color(textColor.r, textColor.g, textColor.b, 0f);
         label.raycastTarget = false;
-        label.sortingLayerID = SortingLayer.NameToID("front");
+        label.sortingLayerID = SortingLayer.NameToID("Front");
         label.sortingOrder = 2;
 
         bool useLostAnim = !isDraw && !attackerWins;
@@ -435,6 +505,12 @@ public class ChessBoard : MonoBehaviour
         piece.HasMoved = true;
         piece.Deselect();
 
+        // Clear tile-bound effects when moving to a tile without them
+        if (!TileHasEffect(to, TileEffectType.Burning) && piece.HasEffect(EffectType.Burning))
+            piece.RemoveEffect(EffectType.Burning);
+        if (!TileHasEffect(to, TileEffectType.Plant) && piece.HasEffect(EffectType.Plant))
+            piece.RemoveEffect(EffectType.Plant);
+
         if (TileHasEffect(to, TileEffectType.Ice))
         {
             int dirCol = System.Math.Sign((to % 8) - (from % 8));
@@ -459,28 +535,68 @@ public class ChessBoard : MonoBehaviour
 
     private void AnimateToTile(ChessPiece piece, int tileIndex, float duration, TweenCallback onComplete = null)
     {
-        piece.SetSortingLayer("front");
+        piece.SetSortingLayer("Front");
 
         piece.transform.DOLocalMove(_tilePositions[tileIndex], duration).SetEase(Ease.OutCubic).OnComplete(() =>
         {
-            piece.SetSortingLayer("piece");
+            piece.SetSortingLayer("Pieces");
             onComplete?.Invoke();
         });
     }
 
     private void ToggleTurn()
     {
-        TickAllEffects();
-        ProcessTileEffects();
+        // Tick effects per-color: each player's effects tick on their own turn
+        PieceColor justPlayed = _currentTurn;
+        TickPieceEffects(justPlayed);
+        ProcessTileEffectLogic(justPlayed);    // logic first: burn/plant check before tiles can expire
+        TickTileEffectDurations(justPlayed);   // then tick/expire tile durations
+
+        // Check if effects destroyed a king (poison expiry, burn damage, etc.)
+        if (FindKing(justPlayed) < 0)
+        {
+            _gameOver = true;
+            PieceColor winner = (justPlayed == PieceColor.White) ? PieceColor.Black : PieceColor.White;
+            Debug.Log($"[Chess] {winner} wins! {justPlayed} king destroyed by effects!");
+            return;
+        }
+
         _currentTurn = (_currentTurn == PieceColor.White) ? PieceColor.Black : PieceColor.White;
+
+        bool inCheck = IsInCheck(_currentTurn);
+        bool hasLegalMoves = HasAnyLegalMoves(_currentTurn);
+
+        if (inCheck && !hasLegalMoves)
+        {
+            _gameOver = true;
+            PieceColor winner = (_currentTurn == PieceColor.White) ? PieceColor.Black : PieceColor.White;
+            int kingIdx = FindKing(_currentTurn);
+            if (kingIdx >= 0)
+                SpawnFloatingTextStyled(_tilePositions[kingIdx], "Checkmate!", new Color(1f, 0.2f, 0.2f), 0f, 0f);
+            Debug.Log($"[Chess] Checkmate! {winner} wins!");
+        }
+        else if (!inCheck && !hasLegalMoves)
+        {
+            _gameOver = true;
+            int kingIdx = FindKing(_currentTurn);
+            if (kingIdx >= 0)
+                SpawnFloatingTextStyled(_tilePositions[kingIdx], "Stalemate!", new Color(0.7f, 0.7f, 0.7f), 0f, 0f);
+            Debug.Log("[Chess] Stalemate!");
+        }
+        else if (inCheck)
+        {
+            int kingIdx = FindKing(_currentTurn);
+            if (kingIdx >= 0)
+                SpawnFloatingTextStyled(_tilePositions[kingIdx], "Check!", new Color(1f, 0.85f, 0.3f), 0f, 0f);
+        }
     }
 
-    private void TickAllEffects()
+    private void TickPieceEffects(PieceColor color)
     {
         for (int i = 0; i < 64; i++)
         {
             ChessPiece piece = _board[i];
-            if (piece == null) continue;
+            if (piece == null || piece.Color != color) continue;
 
             var expired = piece.TickEffects();
             if (expired == null) continue;
@@ -489,8 +605,172 @@ public class ChessBoard : MonoBehaviour
             {
                 if (effect.Type == EffectType.Convert)
                     piece.SetColor(piece.OriginalColor);
+
+                if (effect.Type == EffectType.Transform)
+                    piece.SetPieceType(piece.OriginalType);
+
+                if (effect.Type == EffectType.Poison)
+                {
+                    ApplyEffect(i, new ChessEffect(EffectType.Damage));
+                    break; // piece is destroyed, skip remaining effects
+                }
             }
         }
+    }
+
+    // --- Check & Checkmate ---
+
+    private static readonly (int dc, int dr)[] _bishopDirs =
+        { (1, 1), (1, -1), (-1, 1), (-1, -1) };
+
+    private static readonly (int dc, int dr)[] _rookDirs =
+        { (1, 0), (-1, 0), (0, 1), (0, -1) };
+
+    private static readonly (int dc, int dr)[] _allDirs =
+        { (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1) };
+
+    private static readonly (int dc, int dr)[] _knightOffsets =
+        { (1, 2), (2, 1), (2, -1), (1, -2), (-1, -2), (-2, -1), (-2, 1), (-1, 2) };
+
+    private int FindKing(PieceColor color)
+    {
+        for (int i = 0; i < 64; i++)
+            if (_board[i] != null && _board[i].PieceType == PieceType.King && _board[i].Color == color)
+                return i;
+        return -1;
+    }
+
+    private bool IsSquareAttacked(int square, PieceColor byColor)
+    {
+        int col = square % 8;
+        int row = square / 8;
+
+        // Pawn attacks
+        int pawnRow = (byColor == PieceColor.White) ? row + 1 : row - 1;
+        if (pawnRow >= 0 && pawnRow < 8)
+        {
+            for (int dc = -1; dc <= 1; dc += 2)
+            {
+                int pc = col + dc;
+                if (pc >= 0 && pc < 8)
+                {
+                    ChessPiece p = _board[pawnRow * 8 + pc];
+                    if (p != null && p.Color == byColor && !p.HasEffect(EffectType.Stun) && p.PieceType == PieceType.Pawn)
+                        return true;
+                }
+            }
+        }
+
+        // Knight attacks
+        foreach (var (dc, dr) in _knightOffsets)
+        {
+            int nc = col + dc, nr = row + dr;
+            if (nc >= 0 && nc < 8 && nr >= 0 && nr < 8)
+            {
+                ChessPiece p = _board[nr * 8 + nc];
+                if (p != null && p.Color == byColor && !p.HasEffect(EffectType.Stun) && p.PieceType == PieceType.Knight)
+                    return true;
+            }
+        }
+
+        // Bishop/Queen on diagonals
+        foreach (var (dc, dr) in _bishopDirs)
+        {
+            int nc = col + dc, nr = row + dr;
+            while (nc >= 0 && nc < 8 && nr >= 0 && nr < 8)
+            {
+                ChessPiece p = _board[nr * 8 + nc];
+                if (p != null)
+                {
+                    if (p.Color == byColor && !p.HasEffect(EffectType.Stun) && (p.PieceType == PieceType.Bishop || p.PieceType == PieceType.Queen))
+                        return true;
+                    break;
+                }
+                nc += dc; nr += dr;
+            }
+        }
+
+        // Rook/Queen on ranks/files
+        foreach (var (dc, dr) in _rookDirs)
+        {
+            int nc = col + dc, nr = row + dr;
+            while (nc >= 0 && nc < 8 && nr >= 0 && nr < 8)
+            {
+                ChessPiece p = _board[nr * 8 + nc];
+                if (p != null)
+                {
+                    if (p.Color == byColor && !p.HasEffect(EffectType.Stun) && (p.PieceType == PieceType.Rook || p.PieceType == PieceType.Queen))
+                        return true;
+                    break;
+                }
+                nc += dc; nr += dr;
+            }
+        }
+
+        // King (adjacent)
+        foreach (var (dc, dr) in _allDirs)
+        {
+            int nc = col + dc, nr = row + dr;
+            if (nc >= 0 && nc < 8 && nr >= 0 && nr < 8)
+            {
+                ChessPiece p = _board[nr * 8 + nc];
+                if (p != null && p.Color == byColor && !p.HasEffect(EffectType.Stun) && p.PieceType == PieceType.King)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsInCheck(PieceColor color)
+    {
+        int kingIdx = FindKing(color);
+        if (kingIdx < 0) return false;
+        if (_board[kingIdx].HasEffect(EffectType.Shield)) return false;
+        PieceColor enemy = (color == PieceColor.White) ? PieceColor.Black : PieceColor.White;
+        return IsSquareAttacked(kingIdx, enemy);
+    }
+
+    private bool IsMoveLegal(int from, int to)
+    {
+        ChessPiece piece = _board[from];
+        if (piece == null) return false;
+
+        ChessPiece captured = _board[to];
+        _board[to] = piece;
+        _board[from] = null;
+
+        bool legal = !IsInCheck(piece.Color);
+
+        _board[from] = piece;
+        _board[to] = captured;
+
+        return legal;
+    }
+
+    private List<int> GetLegalMoves(int fromIndex)
+    {
+        ChessPiece piece = _board[fromIndex];
+        if (piece == null) return new List<int>();
+
+        var moves = piece.GetPossibleMoves(fromIndex, _board);
+        moves.RemoveAll(to => !IsMoveLegal(fromIndex, to));
+        moves.RemoveAll(idx => TileHasEffect(idx, TileEffectType.Occupied));
+        return moves;
+    }
+
+    private bool HasAnyLegalMoves(PieceColor color)
+    {
+        for (int i = 0; i < 64; i++)
+        {
+            ChessPiece p = _board[i];
+            if (p == null || p.Color != color) continue;
+            if (p.HasEffect(EffectType.Stun)) continue;
+
+            var moves = GetLegalMoves(i);
+            if (moves.Count > 0) return true;
+        }
+        return false;
     }
 
     // --- Effects ---
@@ -516,17 +796,23 @@ public class ChessBoard : MonoBehaviour
                 ExecutePush(index, effect.PushDirCol, effect.PushDirRow, effect.PushDistance);
                 return;
 
-            case EffectType.Swap:
-                SpawnFloatingText(index, "Swap!");
-                piece.AddEffect(effect);
-                ExecuteSwap(index, effect.SwapTargetIndex);
-                return;
-
             case EffectType.Convert:
                 SpawnFloatingText(index, "Convert!");
                 piece.AddEffect(effect);
                 PieceColor newColor = (piece.Color == PieceColor.White) ? PieceColor.Black : PieceColor.White;
                 piece.SetColor(newColor);
+                return;
+
+            case EffectType.Poison:
+                if (piece.HasEffect(EffectType.Shield)) return;
+                SpawnFloatingText(index, "Poison!");
+                piece.AddEffect(effect);
+                return;
+
+            case EffectType.Transform:
+                SpawnFloatingText(index, "Transform!");
+                piece.AddEffect(effect);
+                piece.SetPieceType(effect.TransformTarget);
                 return;
 
             case EffectType.Stun:
@@ -566,27 +852,22 @@ public class ChessBoard : MonoBehaviour
         AnimateToTile(piece, targetIndex, 0.2f);
     }
 
-    private void ExecuteSwap(int indexA, int indexB)
-    {
-        if (indexA < 0 || indexA >= 64 || indexB < 0 || indexB >= 64) return;
-
-        ChessPiece pieceA = _board[indexA];
-        ChessPiece pieceB = _board[indexB];
-        if (pieceA == null && pieceB == null) return;
-
-        _board[indexA] = pieceB;
-        _board[indexB] = pieceA;
-
-        if (pieceA != null) AnimateToTile(pieceA, indexB, 0.2f);
-        if (pieceB != null) AnimateToTile(pieceB, indexA, 0.2f);
-    }
-
     // --- Tile Effects ---
 
     public void AddTileEffect(int index, TileEffect effect)
     {
         _tileEffects[index].Add(effect);
         CreateTileEffectVisual(index, effect);
+
+        // Immediately apply piece effect if a piece is on this tile
+        ChessPiece piece = _board[index];
+        if (piece != null)
+        {
+            if (effect.Type == TileEffectType.Burning && !piece.HasEffect(EffectType.Burning))
+                piece.AddEffect(new ChessEffect(EffectType.Burning, 3));
+            else if (effect.Type == TileEffectType.Plant && !piece.HasEffect(EffectType.Plant))
+                piece.AddEffect(new ChessEffect(EffectType.Plant, 2));
+        }
     }
 
     public void RemoveTileEffect(int index, TileEffect effect)
@@ -643,23 +924,65 @@ public class ChessBoard : MonoBehaviour
         return curRow * 8 + curCol;
     }
 
-    private void ProcessTileEffects()
+    private void TickTileEffectDurations(PieceColor ownerColor)
     {
         for (int i = 0; i < 64; i++)
         {
             var list = _tileEffects[i];
-            if (list.Count == 0) { _burningTurnCount[i] = 0; _tileOccupant[i] = null; continue; }
+            for (int j = list.Count - 1; j >= 0; j--)
+            {
+                if (list[j].OwnerColor != ownerColor) continue;
+                if (list[j].Tick())
+                {
+                    // Clear piece effects when their tile effect expires
+                    if (_board[i] != null)
+                    {
+                        if (list[j].Type == TileEffectType.Burning)
+                            _board[i].RemoveEffect(EffectType.Burning);
+                        else if (list[j].Type == TileEffectType.Plant)
+                            _board[i].RemoveEffect(EffectType.Plant);
+                    }
+
+                    DestroyTileEffectVisual(list[j]);
+                    list.RemoveAt(j);
+                }
+            }
+        }
+    }
+
+    private void ProcessTileEffectLogic(PieceColor pieceColor)
+    {
+        for (int i = 0; i < 64; i++)
+        {
+            var list = _tileEffects[i];
+            if (list.Count == 0)
+            {
+                _burningTurnCount[i] = 0; _tileOccupant[i] = null;
+                _plantTurnCount[i] = 0; _plantOccupant[i] = null;
+                continue;
+            }
 
             ChessPiece piece = _board[i];
 
+            // --- Burning: count per occupant color ---
             if (TileHasEffect(i, TileEffectType.Burning))
             {
-                if (piece != null)
+                if (piece != null && piece.Color == pieceColor)
                 {
                     if (piece != _tileOccupant[i])
+                    {
                         _burningTurnCount[i] = 0;
+                        if (_tileOccupant[i] != null)
+                            _tileOccupant[i].RemoveEffect(EffectType.Burning);
+                    }
                     _tileOccupant[i] = piece;
                     _burningTurnCount[i]++;
+
+                    if (!piece.HasEffect(EffectType.Burning))
+                        piece.AddEffect(new ChessEffect(EffectType.Burning, 3 - _burningTurnCount[i]));
+                    else
+                        piece.UpdateEffectCounter(EffectType.Burning, 3 - _burningTurnCount[i]);
+
                     if (_burningTurnCount[i] >= 3)
                     {
                         _burningTurnCount[i] = 0;
@@ -667,31 +990,89 @@ public class ChessBoard : MonoBehaviour
                         ApplyEffect(i, new ChessEffect(EffectType.Damage));
                     }
                 }
-                else
+                else if (piece == null)
                 {
+                    if (_tileOccupant[i] != null)
+                        _tileOccupant[i].RemoveEffect(EffectType.Burning);
                     _burningTurnCount[i] = 0;
                     _tileOccupant[i] = null;
                 }
             }
 
-            if (TileHasEffect(i, TileEffectType.Plant) && piece != null)
+            // --- Plant: 1-turn grace, stun refreshes while plant exists ---
+            if (TileHasEffect(i, TileEffectType.Plant))
             {
-                if (!piece.HasEffect(EffectType.Stun))
+                if (piece != null && piece.Color == pieceColor)
                 {
-                    piece.AddEffect(new ChessEffect(EffectType.Stun, 2));
-                    RemoveTileEffectByType(i, TileEffectType.Plant);
-                }
-            }
+                    if (piece != _plantOccupant[i])
+                    {
+                        _plantTurnCount[i] = 0;
+                        if (_plantOccupant[i] != null)
+                            _plantOccupant[i].RemoveEffect(EffectType.Plant);
+                    }
+                    _plantOccupant[i] = piece;
+                    _plantTurnCount[i]++;
 
-            for (int j = list.Count - 1; j >= 0; j--)
-            {
-                if (list[j].Tick())
+                    if (!piece.HasEffect(EffectType.Plant))
+                        piece.AddEffect(new ChessEffect(EffectType.Plant, 2 - _plantTurnCount[i]));
+                    else
+                        piece.UpdateEffectCounter(EffectType.Plant, 2 - _plantTurnCount[i]);
+
+                    if (_plantTurnCount[i] >= 2 && !piece.HasEffect(EffectType.Stun))
+                        piece.AddEffect(new ChessEffect(EffectType.Stun, 1));
+                }
+                else if (piece == null)
                 {
-                    DestroyTileEffectVisual(list[j]);
-                    list.RemoveAt(j);
+                    if (_plantOccupant[i] != null)
+                        _plantOccupant[i].RemoveEffect(EffectType.Plant);
+                    _plantTurnCount[i] = 0;
+                    _plantOccupant[i] = null;
                 }
             }
         }
+    }
+
+    // --- Fight Title ---
+
+    private GameObject SpawnFightTitle(int tileIndex, string atkElement, string defElement)
+    {
+        Vector3 pos = _tilePositions[tileIndex];
+
+        GameObject go = new GameObject("FightTitle");
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = pos;
+        go.transform.localScale = Vector3.one * 5f;
+
+        TextMeshPro label = go.AddComponent<TextMeshPro>();
+        label.rectTransform.sizeDelta = new Vector2(8f, 3f);
+        label.text = $"{atkElement}\n<size=60%>vs</size>\n{defElement}";
+        if (_floatingTextFont != null) label.font = _floatingTextFont;
+        label.fontSize = 6f;
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = TextAlignmentOptions.Center;
+        label.color = new Color(1f, 1f, 1f, 0f);
+        label.raycastTarget = false;
+        label.sortingLayerID = SortingLayer.NameToID("Front");
+        label.sortingOrder = 2;
+
+        Sequence seq = DOTween.Sequence();
+        seq.Append(label.DOFade(0.95f, 0.3f).SetEase(Ease.InOutQuad));
+        seq.Join(go.transform.DOScale(Vector3.one, 0.5f).SetEase(Ease.OutBack));
+
+        return go;
+    }
+
+    private void DismissFightTitle(GameObject go)
+    {
+        if (go == null) return;
+        TextMeshPro label = go.GetComponent<TextMeshPro>();
+        go.transform.DOKill();
+        label.DOKill();
+
+        Sequence seq = DOTween.Sequence();
+        seq.Append(label.DOFade(0f, 0.25f).SetEase(Ease.InQuad));
+        seq.Join(go.transform.DOScale(Vector3.zero, 0.25f).SetEase(Ease.InBack));
+        seq.OnComplete(() => Destroy(go));
     }
 
     // --- Move Indicators ---
@@ -710,7 +1091,7 @@ public class ChessBoard : MonoBehaviour
 
             SpriteRenderer sr = dot.AddComponent<SpriteRenderer>();
             sr.sprite = _moveIndicatorSprite;
-            sr.sortingLayerName = "front";
+            sr.sortingLayerName = "Front";
             sr.sortingOrder = 0;
 
             int dc = (idx % 8) - fromCol;
@@ -765,7 +1146,7 @@ public class ChessBoard : MonoBehaviour
 
         SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
         sr.sprite = sprite;
-        sr.sortingLayerName = "default";
+        sr.sortingLayerName = "Default";
         sr.sortingOrder = 0;
 
         _tileEffectVisuals[effect] = go;
@@ -799,7 +1180,7 @@ public class ChessBoard : MonoBehaviour
         label.alignment = TextAlignmentOptions.Center;
         label.color = Color.white;
         label.raycastTarget = false;
-        label.sortingLayerID = SortingLayer.NameToID("front");
+        label.sortingLayerID = SortingLayer.NameToID("Front");
         label.sortingOrder = 1;
 
         go.transform.DOLocalMoveY(pos.y + _tileSize * 0.6f, 0.6f).SetEase(Ease.OutCubic);
@@ -846,15 +1227,744 @@ public class ChessBoard : MonoBehaviour
         label.alignment = TextAlignmentOptions.Center;
         label.color = new Color(color.r, color.g, color.b, 0f);
         label.raycastTarget = false;
-        label.sortingLayerID = SortingLayer.NameToID("front");
+        label.sortingLayerID = SortingLayer.NameToID("Front");
         label.sortingOrder = 1;
 
         Sequence seq = DOTween.Sequence();
         seq.AppendInterval(delay);
         seq.Append(label.DOFade(1f, 0.15f));
-        seq.AppendInterval(0.8f);
+        seq.AppendInterval(1.6f);
         seq.Append(go.transform.DOLocalMoveY(go.transform.localPosition.y + _tileSize * 0.4f, 0.5f).SetEase(Ease.OutCubic));
         seq.Join(label.DOFade(0f, 0.5f).SetEase(Ease.InCubic));
         seq.OnComplete(() => Destroy(go));
+    }
+
+    // ─── Elemental Reaction ─────────────────────────────────────────────
+
+    private static int GetPieceValue(PieceType type) => type switch
+    {
+        PieceType.Pawn   => 1,
+        PieceType.Knight => 3,
+        PieceType.Bishop => 3,
+        PieceType.Rook   => 5,
+        PieceType.Queen  => 9,
+        PieceType.King   => 4,
+        _                => 1
+    };
+
+    private static string GetPowerTier(int power) => power switch
+    {
+        <= 3  => "minor",
+        <= 6  => "moderate",
+        <= 9  => "major",
+        _     => "massive"
+    };
+
+    private static string IndexToAlgebraic(int index)
+    {
+        int col = index % 8;
+        int row = index / 8;
+        return $"{(char)('a' + col)}{8 - row}";
+    }
+
+    private static int AlgebraicToIndex(string notation)
+    {
+        if (notation == null || notation.Length != 2) return -1;
+        int col = notation[0] - 'a';
+        int row = 8 - (notation[1] - '0');
+        if (col < 0 || col >= 8 || row < 0 || row >= 8) return -1;
+        return row * 8 + col;
+    }
+
+    private (int enemies, int friendlies) CountNearbyPieces(int captureIndex, PieceColor attackerColor, int range = 3)
+    {
+        int capCol = captureIndex % 8;
+        int capRow = captureIndex / 8;
+        int enemies = 0, friendlies = 0;
+
+        for (int i = 0; i < 64; i++)
+        {
+            if (i == captureIndex) continue;
+            ChessPiece p = _board[i];
+            if (p == null) continue;
+
+            int dc = Mathf.Abs((i % 8) - capCol);
+            int dr = Mathf.Abs((i / 8) - capRow);
+            if (Mathf.Max(dc, dr) > range) continue;
+
+            if (p.Color == attackerColor) friendlies++;
+            else enemies++;
+        }
+
+        return (enemies, friendlies);
+    }
+
+    // ─── Pattern Resolution ─────────────────────────────────────────────
+
+    private static readonly string[] ValidPatterns = { "+", "x", "*", "forward", "l", "ring", "area" };
+
+    private List<int> ResolvePattern(string pattern, int distance, int captureIndex, bool obstructed, PieceColor attackerColor)
+    {
+        int capCol = captureIndex % 8;
+        int capRow = captureIndex / 8;
+        var cells = new List<int>();
+
+        distance = Mathf.Clamp(distance, 0, 7);
+
+        switch (pattern)
+        {
+            case "+":
+                ResolveRays(capCol, capRow, _rookDirs, distance, obstructed, cells);
+                break;
+            case "x":
+                ResolveRays(capCol, capRow, _bishopDirs, distance, obstructed, cells);
+                break;
+            case "*":
+                ResolveRays(capCol, capRow, _allDirs, distance, obstructed, cells);
+                break;
+            case "forward":
+                ResolveForward(capCol, capRow, distance, attackerColor, cells);
+                break;
+            case "l":
+                ResolveLShape(capCol, capRow, cells);
+                break;
+            case "ring":
+                ResolveRing(capCol, capRow, distance, cells);
+                break;
+            case "area":
+                ResolveArea(capCol, capRow, distance, cells);
+                break;
+            default:
+                ResolveArea(capCol, capRow, 1, cells);
+                break;
+        }
+
+        return cells;
+    }
+
+    private void ResolveRays(int capCol, int capRow, (int dc, int dr)[] directions, int distance, bool obstructed, List<int> cells)
+    {
+        foreach (var (dc, dr) in directions)
+        {
+            for (int step = 1; step <= distance; step++)
+            {
+                int col = capCol + dc * step;
+                int row = capRow + dr * step;
+                if (col < 0 || col >= 8 || row < 0 || row >= 8) break;
+
+                int index = row * 8 + col;
+                cells.Add(index);
+
+                if (obstructed && _board[index] != null) break;
+            }
+        }
+    }
+
+    private static void ResolveForward(int capCol, int capRow, int distance, PieceColor attackerColor, List<int> cells)
+    {
+        int dir = (attackerColor == PieceColor.White) ? -1 : 1;
+        distance = Mathf.Clamp(distance, 1, 2);
+
+        for (int step = 1; step <= distance; step++)
+        {
+            int row = capRow + dir * step;
+            if (row < 0 || row >= 8) break;
+            cells.Add(row * 8 + capCol);
+        }
+    }
+
+    private static void ResolveLShape(int capCol, int capRow, List<int> cells)
+    {
+        foreach (var (dc, dr) in _knightOffsets)
+        {
+            int col = capCol + dc;
+            int row = capRow + dr;
+            if (col >= 0 && col < 8 && row >= 0 && row < 8)
+                cells.Add(row * 8 + col);
+        }
+    }
+
+    private static void ResolveRing(int capCol, int capRow, int distance, List<int> cells)
+    {
+        if (distance <= 0) return;
+
+        for (int dc = -distance; dc <= distance; dc++)
+        {
+            for (int dr = -distance; dr <= distance; dr++)
+            {
+                if (Mathf.Max(Mathf.Abs(dc), Mathf.Abs(dr)) != distance) continue;
+                int col = capCol + dc;
+                int row = capRow + dr;
+                if (col >= 0 && col < 8 && row >= 0 && row < 8)
+                    cells.Add(row * 8 + col);
+            }
+        }
+    }
+
+    private static void ResolveArea(int capCol, int capRow, int distance, List<int> cells)
+    {
+        for (int dc = -distance; dc <= distance; dc++)
+        {
+            for (int dr = -distance; dr <= distance; dr++)
+            {
+                if (dc == 0 && dr == 0 && distance > 0) continue; // exclude center unless d:0
+                int col = capCol + dc;
+                int row = capRow + dr;
+                if (col >= 0 && col < 8 && row >= 0 && row < 8)
+                    cells.Add(row * 8 + col);
+            }
+        }
+    }
+
+    private List<int> FilterTargets(List<int> indices, string targetFilter, PieceColor attackerColor, string tradeOutcome, bool isTileEffect = false)
+    {
+        // Resolve buff/debuff to concrete filters based on trade outcome
+        // Piece effects: buff -> friendlies, debuff -> enemies (only occupied cells)
+        // Tile effects:  buff -> not_enemies, debuff -> not_friendlies (includes empty cells for terrain placement)
+        // Draw: all_pieces (piece) or terrain (tile)
+        if (targetFilter == "buff" || targetFilter == "debuff")
+        {
+            bool isBuff = targetFilter == "buff";
+            if (isTileEffect)
+            {
+                switch (tradeOutcome)
+                {
+                    case "won":
+                        targetFilter = isBuff ? "not_enemies" : "not_friendlies";
+                        break;
+                    case "lost":
+                        targetFilter = isBuff ? "not_friendlies" : "not_enemies";
+                        break;
+                    default: // draw
+                        targetFilter = "terrain";
+                        break;
+                }
+            }
+            else
+            {
+                switch (tradeOutcome)
+                {
+                    case "won":
+                        targetFilter = isBuff ? "friendlies" : "enemies";
+                        break;
+                    case "lost":
+                        targetFilter = isBuff ? "enemies" : "friendlies";
+                        break;
+                    default: // draw
+                        targetFilter = "all_pieces";
+                        break;
+                }
+            }
+        }
+
+        var filtered = new List<int>();
+        PieceColor enemyColor = (attackerColor == PieceColor.White) ? PieceColor.Black : PieceColor.White;
+
+        foreach (int idx in indices)
+        {
+            ChessPiece piece = _board[idx];
+
+            switch (targetFilter)
+            {
+                case "enemies":
+                    if (piece != null && piece.Color == enemyColor) filtered.Add(idx);
+                    break;
+                case "friendlies":
+                    if (piece != null && piece.Color == attackerColor) filtered.Add(idx);
+                    break;
+                case "all_pieces":
+                    if (piece != null) filtered.Add(idx);
+                    break;
+                case "empty":
+                    if (piece == null) filtered.Add(idx);
+                    break;
+                case "not_friendlies":
+                    if (piece == null || piece.Color == enemyColor) filtered.Add(idx);
+                    break;
+                case "not_enemies":
+                    if (piece == null || piece.Color == attackerColor) filtered.Add(idx);
+                    break;
+                case "terrain":
+                case "all":
+                default:
+                    filtered.Add(idx);
+                    break;
+            }
+        }
+
+        return filtered;
+    }
+
+    private static (int dirCol, int dirRow) ComputePushDirection(int targetIndex, int captureIndex, string direction)
+    {
+        int targetCol = targetIndex % 8;
+        int targetRow = targetIndex / 8;
+        int capCol = captureIndex % 8;
+        int capRow = captureIndex / 8;
+
+        switch (direction)
+        {
+            case "outwards":
+            {
+                int dc = targetCol - capCol;
+                int dr = targetRow - capRow;
+                return (dc == 0 ? 0 : (dc > 0 ? 1 : -1), dr == 0 ? 0 : (dr > 0 ? 1 : -1));
+            }
+            case "inwards":
+            {
+                int dc = capCol - targetCol;
+                int dr = capRow - targetRow;
+                return (dc == 0 ? 0 : (dc > 0 ? 1 : -1), dr == 0 ? 0 : (dr > 0 ? 1 : -1));
+            }
+            case "clockwise":
+            {
+                int dc = targetCol - capCol;
+                int dr = targetRow - capRow;
+                int normDc = dc == 0 ? 0 : (dc > 0 ? 1 : -1);
+                int normDr = dr == 0 ? 0 : (dr > 0 ? 1 : -1);
+                return (-normDr, normDc);
+            }
+            case "counter_clockwise":
+            {
+                int dc = targetCol - capCol;
+                int dr = targetRow - capRow;
+                int normDc = dc == 0 ? 0 : (dc > 0 ? 1 : -1);
+                int normDr = dr == 0 ? 0 : (dr > 0 ? 1 : -1);
+                return (normDr, -normDc);
+            }
+            case "up":    return (0, -1);
+            case "down":  return (0, 1);
+            case "left":  return (-1, 0);
+            case "right": return (1, 0);
+            default:
+            {
+                // Default to outwards
+                int dc = targetCol - capCol;
+                int dr = targetRow - capRow;
+                return (dc == 0 ? 0 : (dc > 0 ? 1 : -1), dr == 0 ? 0 : (dr > 0 ? 1 : -1));
+            }
+        }
+    }
+
+    // ─── Reaction Validation ─────────────────────────────────────────────
+
+    private struct ValidatedEffect
+    {
+        public int TargetIndex;
+        public bool IsTileEffect;
+        public EffectType PieceEffectType;
+        public TileEffectType TileEffectType;
+        public int Duration;
+        public int PushDirCol, PushDirRow, PushDistance;
+        public PieceType TransformTarget;
+    }
+
+    private struct EffectEntryGroup
+    {
+        public string Pattern;
+        public bool Obstructed;
+        public string EffectName;
+        public List<int> AllPatternCells;
+        public List<ValidatedEffect> Effects;
+    }
+
+    private List<EffectEntryGroup> ValidateReaction(ElementReactionResult reaction, int captureIndex, PieceColor attackerColor, string tradeOutcome)
+    {
+        var groups = new List<EffectEntryGroup>();
+        int totalEffects = 0;
+        if (reaction?.effects == null) return groups;
+
+        foreach (var entry in reaction.effects)
+        {
+            string pattern = entry.pattern?.ToLower();
+            if (string.IsNullOrEmpty(pattern)) continue;
+
+            bool patternValid = false;
+            foreach (var vp in ValidPatterns)
+                if (pattern == vp) { patternValid = true; break; }
+            if (!patternValid) continue;
+
+            bool isTileEffect = entry.effect == "Burning" || entry.effect == "Ice" || entry.effect == "Plant" || entry.effect == "Occupied";
+
+            int dist = Mathf.Clamp(entry.distance, 0, 7);
+            var cells = ResolvePattern(pattern, dist, captureIndex, entry.obstructed, attackerColor);
+
+            string targetFilter = entry.target ?? "all";
+            var filtered = FilterTargets(cells, targetFilter, attackerColor, tradeOutcome, isTileEffect);
+
+            string dirInfo = entry.direction != null ? $" dir:{entry.direction}" : "";
+            string pushInfo = entry.effect == "Push" ? $" push_d:{entry.push_distance}" : "";
+            Debug.Log($"[Reaction] pattern:{pattern} d:{dist} obstructed:{entry.obstructed} filter:{targetFilter} effect:{entry.effect}{dirInfo}{pushInfo} | resolved:{cells.Count} -> filtered:{filtered.Count}");
+
+            var entryEffects = new List<ValidatedEffect>();
+
+            foreach (int idx in filtered)
+            {
+                if (totalEffects >= 8) break;
+
+                if (isTileEffect)
+                {
+                    TileEffectType tileType;
+                    switch (entry.effect)
+                    {
+                        case "Burning":  tileType = TileEffectType.Burning; break;
+                        case "Ice":      tileType = TileEffectType.Ice; break;
+                        case "Plant":    tileType = TileEffectType.Plant; break;
+                        case "Occupied": tileType = TileEffectType.Occupied; break;
+                        default: continue;
+                    }
+
+                    int duration = entry.duration;
+                    if (tileType == TileEffectType.Burning && duration < 3) duration = 3;
+                    if (duration <= 0) duration = 4;
+
+                    entryEffects.Add(new ValidatedEffect
+                    {
+                        TargetIndex = idx,
+                        IsTileEffect = true,
+                        TileEffectType = tileType,
+                        Duration = duration
+                    });
+                    totalEffects++;
+                }
+                else
+                {
+                    ChessPiece target = _board[idx];
+                    if (target == null) continue;
+
+                    EffectType effectType;
+                    switch (entry.effect)
+                    {
+                        case "Damage":  effectType = EffectType.Damage; break;
+                        case "Stun":    effectType = EffectType.Stun; break;
+                        case "Shield":  effectType = EffectType.Shield; break;
+                        case "Push":    effectType = EffectType.Push; break;
+                        case "Convert":   effectType = EffectType.Convert; break;
+                        case "Poison":    effectType = EffectType.Poison; break;
+                        case "Transform": effectType = EffectType.Transform; break;
+                        default: continue;
+                    }
+
+                    // King protection
+                    if (target.PieceType == PieceType.King &&
+                        (effectType == EffectType.Damage || effectType == EffectType.Convert ||
+                         effectType == EffectType.Transform))
+                        continue;
+
+                    var fx = new ValidatedEffect
+                    {
+                        TargetIndex = idx,
+                        IsTileEffect = false,
+                        PieceEffectType = effectType,
+                        Duration = entry.duration
+                    };
+
+                    if (fx.Duration <= 0 && effectType != EffectType.Damage)
+                        fx.Duration = effectType == EffectType.Poison ? 3 : 1;
+
+                    if (effectType == EffectType.Push)
+                    {
+                        string dir = entry.direction ?? "outwards";
+                        var (dc, dr) = ComputePushDirection(idx, captureIndex, dir);
+                        if (dc == 0 && dr == 0) continue;
+                        fx.PushDirCol = dc;
+                        fx.PushDirRow = dr;
+                        fx.PushDistance = Mathf.Max(entry.push_distance, 1);
+                    }
+
+                    if (effectType == EffectType.Transform)
+                    {
+                        string pt = entry.piece_type ?? "";
+                        PieceType tt;
+                        switch (pt)
+                        {
+                            case "Pawn":   tt = PieceType.Pawn; break;
+                            case "Knight": tt = PieceType.Knight; break;
+                            case "Bishop": tt = PieceType.Bishop; break;
+                            case "Rook":   tt = PieceType.Rook; break;
+                            case "Queen":  tt = PieceType.Queen; break;
+                            default: continue;
+                        }
+                        fx.TransformTarget = tt;
+                    }
+
+                    entryEffects.Add(fx);
+                    totalEffects++;
+                }
+            }
+
+            // Sort Damage effects last within this group
+            if (entryEffects.Count > 1)
+            {
+                entryEffects.Sort((a, b) =>
+                {
+                    bool aDmg = !a.IsTileEffect && a.PieceEffectType == EffectType.Damage;
+                    bool bDmg = !b.IsTileEffect && b.PieceEffectType == EffectType.Damage;
+                    return aDmg.CompareTo(bDmg);
+                });
+            }
+
+            // Always add group so particles play on pattern cells even if no effects matched
+            groups.Add(new EffectEntryGroup
+            {
+                Pattern = pattern,
+                Obstructed = entry.obstructed,
+                EffectName = entry.effect,
+                AllPatternCells = cells,
+                Effects = entryEffects
+            });
+
+            if (totalEffects >= 8) break;
+        }
+
+        return groups;
+    }
+
+    // ─── Reaction Fallback ──────────────────────────────────────────────
+
+    private ElementReactionResult GenerateFallbackReaction(int captureIndex, ChessPiece attacker, bool attackerWins, bool isDraw)
+    {
+        string element = attacker.Element?.ToLower() ?? "";
+
+        string tileEffect = "Burning";
+        if (element.Contains("ice") || element.Contains("frost") || element.Contains("water") || element.Contains("cold"))
+            tileEffect = "Ice";
+        else if (element.Contains("plant") || element.Contains("vine") || element.Contains("nature") || element.Contains("grass"))
+            tileEffect = "Plant";
+        else if (element.Contains("air") || element.Contains("wind") || element.Contains("storm") || element.Contains("gust") || element.Contains("breeze"))
+            tileEffect = "Ice";
+
+        var effects = new[] { new ReactionEffectEntry
+        {
+            pattern = "area",
+            distance = 1,
+            obstructed = false,
+            target = "terrain",
+            effect = tileEffect,
+            duration = 4
+        }};
+
+        return new ElementReactionResult
+        {
+            effects = effects,
+            flavor = "A surge of elemental energy!"
+        };
+    }
+
+    // ─── Apply Reaction ─────────────────────────────────────────────────
+
+    private const float EffectSpreadDelay = 0.1f;
+    private const float EffectGroupGap = 0.8f;
+
+    private IEnumerator ApplyReaction(int captureIndex, ElementReactionResult reaction, PieceColor attackerColor, string tradeOutcome)
+    {
+        // Keep flavor for game log, but don't display it
+        if (!string.IsNullOrEmpty(reaction.flavor))
+            Debug.Log($"[Reaction] {reaction.flavor}");
+
+        var groups = ValidateReaction(reaction, captureIndex, attackerColor, tradeOutcome);
+        if (groups.Count == 0) yield break;
+
+        _isPlayingReaction = true;
+
+        for (int i = 0; i < groups.Count; i++)
+        {
+            yield return StartCoroutine(PlayEffectGroup(groups[i], captureIndex, attackerColor));
+            if (i < groups.Count - 1)
+                yield return new WaitForSeconds(EffectGroupGap);
+        }
+
+        yield return new WaitForSeconds(0.3f);
+        _isPlayingReaction = false;
+    }
+
+    private static Color GetEffectColor(string effectName)
+    {
+        switch (effectName)
+        {
+            case "Stun":      return new Color(0.6f, 0.2f, 0.9f);     // purple
+            case "Shield":    return new Color(0.7f, 0.7f, 0.7f);     // grey
+            case "Occupied":  return new Color(0.9f, 0.15f, 0.15f);   // red
+            case "Burning":   return new Color(1f, 0.45f, 0.1f);      // red-orange
+            case "Ice":       return new Color(0.4f, 0.75f, 1f);      // icy blue
+            case "Plant":     return new Color(0.2f, 0.85f, 0.3f);    // green
+            case "Damage":    return new Color(1f, 0.2f, 0.2f);       // red
+            case "Poison":    return new Color(0.4f, 0.9f, 0.2f);     // yellow-green
+            case "Push":      return new Color(0.9f, 0.8f, 0.3f);     // gold
+            case "Convert":   return new Color(0.9f, 0.5f, 0.9f);     // pink
+            case "Transform": return new Color(0.3f, 0.6f, 1f);       // blue
+            default:          return Color.white;
+        }
+    }
+
+    private IEnumerator PlayEffectGroup(EffectEntryGroup group, int captureIndex, PieceColor attackerColor)
+    {
+        int capCol = captureIndex % 8;
+        int capRow = captureIndex / 8;
+        Color particleColor = GetEffectColor(group.EffectName);
+
+        // Build effect lookup by cell index
+        var effectsByCell = new Dictionary<int, List<ValidatedEffect>>();
+        foreach (var fx in group.Effects)
+        {
+            if (!effectsByCell.ContainsKey(fx.TargetIndex))
+                effectsByCell[fx.TargetIndex] = new List<ValidatedEffect>();
+            effectsByCell[fx.TargetIndex].Add(fx);
+        }
+
+        bool isInstant = group.Pattern == "l" || group.Pattern == "ring";
+
+        if (isInstant)
+        {
+            // Spawn all particles at once, apply effects immediately
+            foreach (int idx in group.AllPatternCells)
+            {
+                bool hasEffect = effectsByCell.TryGetValue(idx, out var fxList);
+
+                if (hasEffect)
+                {
+                    SpawnEffectParticle(idx, particleColor, group.EffectName);
+                    foreach (var fx in fxList)
+                        ApplyValidatedEffect(fx, attackerColor);
+                }
+                else if (_board[idx] != null)
+                {
+                    SpawnMissLabel(idx, particleColor, group.EffectName);
+                }
+                else
+                {
+                    SpawnEffectParticle(idx, particleColor, group.EffectName);
+                }
+            }
+        }
+        else
+        {
+            // Group pattern cells by distance from capture, spread outward
+            var byDistance = new SortedDictionary<int, List<int>>();
+            foreach (int idx in group.AllPatternCells)
+            {
+                int col = idx % 8, row = idx / 8;
+                int dist = Mathf.Max(Mathf.Abs(col - capCol), Mathf.Abs(row - capRow));
+                if (!byDistance.ContainsKey(dist))
+                    byDistance[dist] = new List<int>();
+                byDistance[dist].Add(idx);
+            }
+
+            int prevDist = 0;
+            bool first = true;
+            foreach (var kvp in byDistance)
+            {
+                if (!first && kvp.Key > prevDist)
+                    yield return new WaitForSeconds((kvp.Key - prevDist) * EffectSpreadDelay);
+                first = false;
+                prevDist = kvp.Key;
+
+                foreach (int idx in kvp.Value)
+                {
+                    bool hasEffect = effectsByCell.TryGetValue(idx, out var fxList);
+
+                    if (hasEffect)
+                    {
+                        SpawnEffectParticle(idx, particleColor, group.EffectName);
+                        foreach (var fx in fxList)
+                            ApplyValidatedEffect(fx, attackerColor);
+                    }
+                    else if (_board[idx] != null)
+                    {
+                        SpawnMissLabel(idx, particleColor, group.EffectName);
+                    }
+                    else
+                    {
+                        SpawnEffectParticle(idx, particleColor, group.EffectName);
+                    }
+                }
+            }
+        }
+    }
+
+    private void SpawnEffectParticle(int cellIndex, Color color, string effectName)
+    {
+        if (_effectHitPrefab != null)
+        {
+            var ps = Instantiate(_effectHitPrefab, _tilePositions[cellIndex], Quaternion.identity);
+            var main = ps.main;
+            main.startColor = color;
+            main.startLifetime = main.startLifetime.constantMax + 0.8f;
+            ps.Play();
+            Destroy(ps.gameObject, main.duration + main.startLifetime.constantMax);
+        }
+
+        // Small effect name label
+        Vector3 pos = _tilePositions[cellIndex];
+        GameObject go = new GameObject("EffectLabel");
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = pos;
+
+        TextMeshPro label = go.AddComponent<TextMeshPro>();
+        label.rectTransform.sizeDelta = new Vector2(2f, 0.4f);
+        label.text = effectName;
+        if (_floatingTextFont != null) label.font = _floatingTextFont;
+        label.fontSize = 2.5f;
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = TextAlignmentOptions.Center;
+        label.color = color;
+        label.raycastTarget = false;
+        label.sortingLayerID = SortingLayer.NameToID("Front");
+        label.sortingOrder = 1;
+
+        Sequence seq = DOTween.Sequence();
+        seq.Append(go.transform.DOLocalMoveY(pos.y + _tileSize * 0.3f, 0.4f).SetEase(Ease.OutCubic));
+        seq.AppendInterval(0.6f);
+        seq.Append(go.transform.DOLocalMoveY(pos.y + _tileSize * 0.5f, 0.4f).SetEase(Ease.OutCubic));
+        seq.Join(label.DOFade(0f, 0.4f).SetEase(Ease.InQuad));
+        seq.OnComplete(() => Destroy(go));
+    }
+
+    private void SpawnMissLabel(int cellIndex, Color baseColor, string effectName)
+    {
+        Vector3 pos = _tilePositions[cellIndex];
+        GameObject go = new GameObject("MissLabel");
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = pos;
+
+        TextMeshPro label = go.AddComponent<TextMeshPro>();
+        label.rectTransform.sizeDelta = new Vector2(2f, 0.4f);
+        label.text = $"{effectName} Miss!";
+        if (_floatingTextFont != null) label.font = _floatingTextFont;
+        label.fontSize = 2.5f;
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = TextAlignmentOptions.Center;
+        label.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.5f);
+        label.raycastTarget = false;
+        label.sortingLayerID = SortingLayer.NameToID("Front");
+        label.sortingOrder = 1;
+
+        Sequence seq = DOTween.Sequence();
+        seq.Append(go.transform.DOLocalMoveY(pos.y + _tileSize * 0.3f, 0.4f).SetEase(Ease.OutCubic));
+        seq.AppendInterval(0.6f);
+        seq.Append(go.transform.DOLocalMoveY(pos.y + _tileSize * 0.5f, 0.4f).SetEase(Ease.OutCubic));
+        seq.Join(label.DOFade(0f, 0.4f).SetEase(Ease.InQuad));
+        seq.OnComplete(() => Destroy(go));
+    }
+
+    private void ApplyValidatedEffect(ValidatedEffect fx, PieceColor attackerColor)
+    {
+        if (fx.IsTileEffect)
+        {
+            AddTileEffect(fx.TargetIndex, new TileEffect(fx.TileEffectType, fx.Duration, attackerColor));
+        }
+        else
+        {
+            var effect = new ChessEffect(fx.PieceEffectType, fx.Duration);
+            if (fx.PieceEffectType == EffectType.Push)
+            {
+                effect.PushDirCol = fx.PushDirCol;
+                effect.PushDirRow = fx.PushDirRow;
+                effect.PushDistance = fx.PushDistance;
+            }
+            if (fx.PieceEffectType == EffectType.Transform)
+                effect.TransformTarget = fx.TransformTarget;
+            ApplyEffect(fx.TargetIndex, effect);
+        }
     }
 }

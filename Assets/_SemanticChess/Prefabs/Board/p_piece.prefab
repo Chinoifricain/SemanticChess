@@ -10052,3 +10052,10 @@ MonoBehaviour:
     sprite: {fileID: 725073791128483199, guid: 97971644e213cbf4bb88596f8604ec0b, type: 3}
   - type: 3
     sprite: {fileID: 30157349317308275, guid: 753cad1571eee4a44b2975a26c6b9ccc, type: 3}
+  _effectParticleEntries:
+  - type: 5
+    prefab: {fileID: 2130436245675512399, guid: c1b900790b01fd342b33c641bd30caa1, type: 3}
+  - type: 7
+    prefab: {fileID: 115520196123387630, guid: 1ea37a9f602345643b1bea934b9f6d75, type: 3}
+  - type: 8
+    prefab: {fileID: 2795859124223632636, guid: b5301e869e044eb4e949020a88c7e944, type: 3}

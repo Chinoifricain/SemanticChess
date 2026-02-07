@@ -21,6 +21,13 @@ public struct EffectSpriteEntry
     public Sprite sprite;
 }
 
+[System.Serializable]
+public struct EffectParticleEntry
+{
+    public EffectType type;
+    public ParticleSystem prefab;
+}
+
 public class ChessPiece : MonoBehaviour
 {
     [Header("Piece to Sprite")]
@@ -38,8 +45,10 @@ public class ChessPiece : MonoBehaviour
     [SerializeField] private ParticleSystem _dustParticle;
     [SerializeField] private ParticleSystem _fightParticle;
     [SerializeField] private EffectSpriteEntry[] _effectSpriteEntries;
+    [SerializeField] private EffectParticleEntry[] _effectParticleEntries;
 
     public PieceType PieceType { get; private set; }
+    public PieceType OriginalType { get; private set; }
     public PieceColor Color { get; private set; }
     public PieceColor OriginalColor { get; private set; }
     public bool HasMoved { get; set; }
@@ -48,6 +57,7 @@ public class ChessPiece : MonoBehaviour
     public string Element { get; private set; }
     public string Emoji { get; private set; }
     private TextMeshPro _elementLabel;
+    private TMP_FontAsset _font;
     private SpriteRenderer _emojiRenderer;
     private Tween _labelPopTween;
     private bool _revealPlaying;
@@ -73,6 +83,8 @@ public class ChessPiece : MonoBehaviour
     public IReadOnlyList<ChessEffect> Effects => _effects;
     private readonly Dictionary<ChessEffect, GameObject> _effectIcons = new Dictionary<ChessEffect, GameObject>();
     private readonly Dictionary<ChessEffect, Tween> _effectIconTweens = new Dictionary<ChessEffect, Tween>();
+    private readonly Dictionary<ChessEffect, ParticleSystem> _effectParticles = new Dictionary<ChessEffect, ParticleSystem>();
+    private readonly Dictionary<ChessEffect, TextMeshPro> _effectCounters = new Dictionary<ChessEffect, TextMeshPro>();
 
     private Transform _spriteT;
     private Transform _shadowT;
@@ -84,6 +96,7 @@ public class ChessPiece : MonoBehaviour
     public void Init(PieceType type, PieceColor color)
     {
         PieceType = type;
+        OriginalType = type;
         Color = color;
         OriginalColor = color;
         HasMoved = false;
@@ -103,9 +116,9 @@ public class ChessPiece : MonoBehaviour
         _spriteRestPos = _spriteT.localPosition;
         _shadowRestPos = _shadowT.localPosition;
 
-        _shadowRenderer.sortingLayerName = "piece";
+        _shadowRenderer.sortingLayerName = "Pieces";
         _shadowRenderer.sortingOrder = 0;
-        _spriteRenderer.sortingLayerName = "piece";
+        _spriteRenderer.sortingLayerName = "Pieces";
         _spriteRenderer.sortingOrder = 1;
     }
 
@@ -190,12 +203,26 @@ public class ChessPiece : MonoBehaviour
     {
         _effects.Add(effect);
         CreateEffectIcon(effect);
+        CreateEffectParticle(effect);
+        CreateEffectCounter(effect);
     }
 
     public void RemoveEffect(ChessEffect effect)
     {
         _effects.Remove(effect);
-        DestroyEffectIcon(effect);
+        DestroyEffectVisuals(effect);
+    }
+
+    public void RemoveEffect(EffectType type)
+    {
+        for (int i = _effects.Count - 1; i >= 0; i--)
+        {
+            if (_effects[i].Type == type)
+            {
+                DestroyEffectVisuals(_effects[i]);
+                _effects.RemoveAt(i);
+            }
+        }
     }
 
     public bool HasEffect(EffectType type)
@@ -205,19 +232,43 @@ public class ChessPiece : MonoBehaviour
         return false;
     }
 
+    public void UpdateEffectCounter(EffectType type, int value)
+    {
+        foreach (var effect in _effects)
+        {
+            if (effect.Type != type) continue;
+            effect.Duration = value;
+            if (_effectCounters.TryGetValue(effect, out var counter) && counter != null)
+                counter.text = value.ToString();
+            break;
+        }
+    }
+
     public List<ChessEffect> TickEffects()
     {
         List<ChessEffect> expired = null;
         for (int i = _effects.Count - 1; i >= 0; i--)
         {
+            // Board-managed effects, skip auto-tick
+            if (_effects[i].Type == EffectType.Burning || _effects[i].Type == EffectType.Plant) continue;
+
             if (_effects[i].Tick())
             {
                 expired ??= new List<ChessEffect>();
                 expired.Add(_effects[i]);
-                DestroyEffectIcon(_effects[i]);
+                DestroyEffectVisuals(_effects[i]);
                 _effects.RemoveAt(i);
             }
         }
+
+        // Update remaining counters
+        foreach (var effect in _effects)
+        {
+            if (effect.Type == EffectType.Burning || effect.Type == EffectType.Plant) continue;
+            if (_effectCounters.TryGetValue(effect, out var counter) && counter != null)
+                counter.text = effect.Duration.ToString();
+        }
+
         return expired;
     }
 
@@ -225,6 +276,14 @@ public class ChessPiece : MonoBehaviour
     {
         Color = newColor;
         Sprite sprite = GetSprite(PieceType, newColor);
+        _spriteRenderer.sprite = sprite;
+        _shadowRenderer.sprite = sprite;
+    }
+
+    public void SetPieceType(PieceType newType)
+    {
+        PieceType = newType;
+        Sprite sprite = GetSprite(newType, Color);
         _spriteRenderer.sprite = sprite;
         _shadowRenderer.sprite = sprite;
     }
@@ -248,6 +307,7 @@ public class ChessPiece : MonoBehaviour
     {
         Element = element;
         Emoji = emoji;
+        if (font != null) _font = font;
 
         // Create emoji renderer
         if (_emojiRenderer == null)
@@ -257,7 +317,7 @@ public class ChessPiece : MonoBehaviour
             go.transform.localPosition = EmojiRestLocal;
 
             _emojiRenderer = go.AddComponent<SpriteRenderer>();
-            _emojiRenderer.sortingLayerName = "piece";
+            _emojiRenderer.sortingLayerName = "Pieces";
             _emojiRenderer.sortingOrder = 3;
         }
 
@@ -274,7 +334,7 @@ public class ChessPiece : MonoBehaviour
             _elementLabel.alignment = TextAlignmentOptions.Center;
             _elementLabel.color = new UnityEngine.Color(1f, 1f, 1f, 0.95f);
             _elementLabel.raycastTarget = false;
-            _elementLabel.sortingLayerID = SortingLayer.NameToID("piece");
+            _elementLabel.sortingLayerID = SortingLayer.NameToID("Pieces");
             _elementLabel.sortingOrder = 3;
             _elementLabel.rectTransform.sizeDelta = new Vector2(4f, 0.5f);
             _elementLabel.enableWordWrapping = false;
@@ -416,7 +476,7 @@ public class ChessPiece : MonoBehaviour
 
         SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
         sr.sprite = sprite;
-        sr.sortingLayerName = "piece";
+        sr.sortingLayerName = "Pieces";
         sr.sortingOrder = 2;
 
         _effectIcons[effect] = go;
@@ -428,7 +488,64 @@ public class ChessPiece : MonoBehaviour
         _effectIconTweens[effect] = floatTween;
     }
 
-    private void DestroyEffectIcon(ChessEffect effect)
+    private void CreateEffectParticle(ChessEffect effect)
+    {
+        ParticleSystem prefab = GetEffectParticlePrefab(effect.Type);
+        if (prefab == null) return;
+
+        ParticleSystem ps = Instantiate(prefab, _spriteT, false);
+        ps.transform.localPosition = Vector3.zero;
+        ps.Play();
+        _effectParticles[effect] = ps;
+    }
+
+    private ParticleSystem GetEffectParticlePrefab(EffectType type)
+    {
+        if (_effectParticleEntries == null) return null;
+        foreach (var entry in _effectParticleEntries)
+            if (entry.type == type) return entry.prefab;
+        return null;
+    }
+
+    private void CreateEffectCounter(ChessEffect effect)
+    {
+        if (effect.Duration <= 0) return;
+
+        GameObject go = new GameObject($"EffectCounter_{effect.Type}");
+        go.transform.SetParent(_spriteT, false);
+        go.transform.localPosition = new Vector3(0.25f, -0.2f, 0f);
+
+        TextMeshPro tmp = go.AddComponent<TextMeshPro>();
+        tmp.rectTransform.sizeDelta = new Vector2(0.6f, 0.4f);
+        tmp.text = effect.Duration.ToString();
+        if (_font != null) tmp.font = _font;
+        tmp.fontSize = 3f;
+        tmp.fontStyle = FontStyles.Bold;
+        tmp.alignment = TextAlignmentOptions.Center;
+        tmp.color = GetEffectParticleColor(effect.Type);
+        tmp.raycastTarget = false;
+        tmp.sortingLayerID = SortingLayer.NameToID("Pieces");
+        tmp.sortingOrder = 3;
+
+        _effectCounters[effect] = tmp;
+    }
+
+    private static Color GetEffectParticleColor(EffectType type)
+    {
+        switch (type)
+        {
+            case EffectType.Poison:    return new Color(0.4f, 0.9f, 0.2f);
+            case EffectType.Stun:      return new Color(0.6f, 0.2f, 0.9f);
+            case EffectType.Shield:    return new Color(0.7f, 0.7f, 0.7f);
+            case EffectType.Transform: return new Color(0.3f, 0.6f, 1f);
+            case EffectType.Convert:   return new Color(0.9f, 0.5f, 0.9f);
+            case EffectType.Burning:   return new Color(1f, 0.45f, 0.1f);
+            case EffectType.Plant:     return new Color(0.2f, 0.85f, 0.3f);
+            default:                   return UnityEngine.Color.white;
+        }
+    }
+
+    private void DestroyEffectVisuals(ChessEffect effect)
     {
         if (_effectIconTweens.TryGetValue(effect, out Tween tween))
         {
@@ -440,6 +557,16 @@ public class ChessPiece : MonoBehaviour
             if (go != null) Object.Destroy(go);
             _effectIcons.Remove(effect);
         }
+        if (_effectParticles.TryGetValue(effect, out ParticleSystem ps))
+        {
+            if (ps != null) Object.Destroy(ps.gameObject);
+            _effectParticles.Remove(effect);
+        }
+        if (_effectCounters.TryGetValue(effect, out TextMeshPro tmp))
+        {
+            if (tmp != null) Object.Destroy(tmp.gameObject);
+            _effectCounters.Remove(effect);
+        }
     }
 
     private void ClearAllEffectIcons()
@@ -450,6 +577,12 @@ public class ChessPiece : MonoBehaviour
         foreach (var kvp in _effectIcons)
             if (kvp.Value != null) Object.Destroy(kvp.Value);
         _effectIcons.Clear();
+        foreach (var kvp in _effectParticles)
+            if (kvp.Value != null) Object.Destroy(kvp.Value.gameObject);
+        _effectParticles.Clear();
+        foreach (var kvp in _effectCounters)
+            if (kvp.Value != null) Object.Destroy(kvp.Value.gameObject);
+        _effectCounters.Clear();
     }
 
     private static bool CanCapture(ChessPiece target)
