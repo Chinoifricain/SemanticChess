@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
@@ -66,6 +67,7 @@ public class ChessBoard : MonoBehaviour
     private const float BoardAttractRadius = 12f;
     private const float BoardAttractStrength = 0.03f;
     private Vector3 _boardRestPos;
+    private readonly HashSet<Transform> _staticChildren = new HashSet<Transform>();
 
     private PieceColor _currentTurn = PieceColor.White;
     private int _selectedIndex = -1;
@@ -75,6 +77,25 @@ public class ChessBoard : MonoBehaviour
     private bool _isPlayingReaction;
     private bool _gameOver;
     private int _hoveredIndex = -1;
+
+    // --- Public API ---
+    public PieceColor CurrentTurn => _currentTurn;
+    public bool IsMoving => _isMoving;
+    public bool IsGameOver => _gameOver;
+    public bool IsPlayingReaction => _isPlayingReaction;
+    public int SelectedIndex => _selectedIndex;
+    public SpriteRenderer BoardSprite => _boardSprite;
+
+    // --- Events ---
+    public event Action<PieceColor> OnTurnChanged;
+    public event Action<MatchResult> OnGameOver;
+    public event Action<int, int> OnMoveMade;
+
+    /// <summary>
+    /// Whether the board has been initialized (Start has run).
+    /// GameManager checks this to know when it's safe to call ResetBoard.
+    /// </summary>
+    public bool IsInitialized { get; private set; }
 
     private void Start()
     {
@@ -88,7 +109,12 @@ public class ChessBoard : MonoBehaviour
         _emojiService = gameObject.AddComponent<EmojiLoader>();
 
         ComputeTilePositions();
-        SetupBoard();
+
+        // Track scene children so ResetBoard doesn't destroy them
+        foreach (Transform child in transform)
+            _staticChildren.Add(child);
+
+        IsInitialized = true;
     }
 
     // --- Board Geometry ---
@@ -112,35 +138,146 @@ public class ChessBoard : MonoBehaviour
     }
 
     public Vector3 GetTilePosition(int index) => transform.TransformPoint(_tilePositions[index]);
+    public Vector3 GetTileLocalPosition(int index) => _tilePositions[index];
     public float TileSize => _tileSize;
+
+    /// <summary>
+    /// Convert a world position to board tile index. Returns -1 if outside the board.
+    /// </summary>
+    public int WorldToTileIndex(Vector3 worldPos)
+    {
+        Bounds b = _boardSprite.bounds;
+        float localX = worldPos.x - b.min.x;
+        float localY = b.max.y - worldPos.y;
+        int col = Mathf.FloorToInt(localX / _tileSize);
+        int row = Mathf.FloorToInt(localY / _tileSize);
+        if (col >= 0 && col < 8 && row >= 0 && row < 8)
+            return row * 8 + col;
+        return -1;
+    }
+
+    // --- Public Move API ---
+
+    /// <summary>
+    /// Single entry point for all game modes to submit moves.
+    /// Validates the move is legal, then executes it.
+    /// </summary>
+    public bool SubmitMove(MoveRequest move)
+    {
+        if (_isMoving || _gameOver) return false;
+        if (move.Player != _currentTurn) return false;
+
+        ChessPiece piece = _board[move.FromIndex];
+        if (piece == null || piece.Color != _currentTurn) return false;
+
+        var legal = GetLegalMoves(move.FromIndex);
+        if (!legal.Contains(move.ToIndex)) return false;
+
+        OnMoveMade?.Invoke(move.FromIndex, move.ToIndex);
+        ExecuteMove(move.FromIndex, move.ToIndex);
+        return true;
+    }
+
+    /// <summary>
+    /// Get legal moves for a piece at the given index. Returns empty list if invalid.
+    /// </summary>
+    public List<int> GetLegalMovesFor(int index)
+    {
+        return GetLegalMoves(index);
+    }
+
+    // --- Selection (called by game modes) ---
+
+    public void SelectPiece(int index)
+    {
+        TrySelect(index);
+    }
+
+    public void DeselectPiece()
+    {
+        Deselect();
+    }
+
+    public void SetHoveredIndex(int index)
+    {
+        if (index == _hoveredIndex) return;
+
+        if (_hoveredIndex >= 0 && _board[_hoveredIndex] != null)
+            _board[_hoveredIndex].ShowHover(false);
+
+        _hoveredIndex = index;
+
+        if (_hoveredIndex >= 0 && _board[_hoveredIndex] != null)
+            _board[_hoveredIndex].ShowHover(true);
+    }
+
+    // --- Board Lifecycle ---
+
+    /// <summary>
+    /// Reset the board for a new game. Clears all pieces, effects, and state,
+    /// then sets up a fresh starting position.
+    /// </summary>
+    public void ResetBoard()
+    {
+        StopAllCoroutines();
+
+        // Kill all tweens
+        foreach (Transform child in transform)
+            DOTween.Kill(child);
+
+        // Destroy all pieces
+        for (int i = 0; i < 64; i++)
+        {
+            if (_board[i] != null)
+            {
+                Destroy(_board[i].gameObject);
+                _board[i] = null;
+            }
+        }
+
+        // Clear tile effects
+        for (int i = 0; i < 64; i++)
+        {
+            foreach (var te in _tileEffects[i])
+                DestroyTileEffectVisual(te);
+            _tileEffects[i].Clear();
+            _burningTurnCount[i] = 0;
+            _tileOccupant[i] = null;
+            _plantTurnCount[i] = 0;
+            _plantOccupant[i] = null;
+        }
+
+        // Destroy leftover dynamic GameObjects (floating text, indicators, fight titles)
+        var toDestroy = new List<GameObject>();
+        foreach (Transform child in transform)
+        {
+            if (_staticChildren.Contains(child)) continue;
+            toDestroy.Add(child.gameObject);
+        }
+        foreach (var go in toDestroy)
+            Destroy(go);
+
+        // Reset state
+        _currentTurn = PieceColor.White;
+        _isMoving = false;
+        _isPlayingReaction = false;
+        _gameOver = false;
+        _hoveredIndex = -1;
+        _selectedIndex = -1;
+        _validMoves.Clear();
+        _indicators.Clear();
+        _tileEffectVisuals.Clear();
+
+        Time.timeScale = 1f;
+
+        SetupBoard();
+    }
 
     // --- Input ---
 
     private void Update()
     {
-        // Hold click to fast-forward during reaction effects
-        if (_isPlayingReaction && Input.GetMouseButton(0))
-            Time.timeScale = 4f;
-        else if (Time.timeScale != 1f)
-            Time.timeScale = 1f;
-
         UpdateBoardAttraction();
-
-        if (!_isMoving && !_gameOver)
-            UpdateHover();
-
-        if (_isMoving || _gameOver) return;
-        if (!Input.GetMouseButtonDown(0)) return;
-
-        Vector3 world = _cam.ScreenToWorldPoint(Input.mousePosition);
-        Bounds b = _boardSprite.bounds;
-        float localX = world.x - b.min.x;
-        float localY = b.max.y - world.y;
-        int col = Mathf.FloorToInt(localX / _tileSize);
-        int row = Mathf.FloorToInt(localY / _tileSize);
-
-        if (col >= 0 && col < 8 && row >= 0 && row < 8)
-            OnTileClicked(row * 8 + col);
     }
 
     private void UpdateBoardAttraction()
@@ -159,36 +296,7 @@ public class ChessBoard : MonoBehaviour
         transform.position = Vector3.Lerp(transform.position, _boardRestPos + offset, smooth);
     }
 
-    private void UpdateHover()
-    {
-        if (_hoveredIndex >= 0 && _board[_hoveredIndex] == null)
-            _hoveredIndex = -1;
-
-        Vector3 world = _cam.ScreenToWorldPoint(Input.mousePosition);
-        Bounds b = _boardSprite.bounds;
-        float localX = world.x - b.min.x;
-        float localY = b.max.y - world.y;
-        int col = Mathf.FloorToInt(localX / _tileSize);
-        int row = Mathf.FloorToInt(localY / _tileSize);
-
-        int newHovered = -1;
-        if (col >= 0 && col < 8 && row >= 0 && row < 8)
-        {
-            int idx = row * 8 + col;
-            if (_board[idx] != null)
-                newHovered = idx;
-        }
-
-        if (newHovered == _hoveredIndex) return;
-
-        if (_hoveredIndex >= 0 && _board[_hoveredIndex] != null)
-            _board[_hoveredIndex].ShowHover(false);
-
-        _hoveredIndex = newHovered;
-
-        if (_hoveredIndex >= 0)
-            _board[_hoveredIndex].ShowHover(true);
-    }
+    // Hover is now managed by game modes via SetHoveredIndex()
 
     // --- Board Setup ---
 
@@ -229,42 +337,7 @@ public class ChessBoard : MonoBehaviour
 
     // --- Selection & Movement ---
 
-    private void OnTileClicked(int index)
-    {
-        if (_isMoving) return;
-
-        if (_selectedIndex == -1)
-        {
-            TrySelect(index);
-            return;
-        }
-
-        if (index == _selectedIndex)
-        {
-            Deselect();
-            return;
-        }
-
-        if (_board[index] != null && _board[index].Color == _currentTurn
-            && !_board[index].HasEffect(EffectType.Stun))
-        {
-            Deselect();
-            TrySelect(index);
-            return;
-        }
-
-        if (_validMoves.Contains(index))
-        {
-            int from = _selectedIndex;
-            ClearIndicators();
-            _selectedIndex = -1;
-            _validMoves.Clear();
-            ExecuteMove(from, index);
-            return;
-        }
-
-        Deselect();
-    }
+    // OnTileClicked logic is now in game modes (LocalGameMode, etc.)
 
     private void TrySelect(int index)
     {
@@ -558,10 +631,12 @@ public class ChessBoard : MonoBehaviour
             _gameOver = true;
             PieceColor winner = (justPlayed == PieceColor.White) ? PieceColor.Black : PieceColor.White;
             Debug.Log($"[Chess] {winner} wins! {justPlayed} king destroyed by effects!");
+            OnGameOver?.Invoke(new MatchResult { Outcome = MatchOutcome.KingDestroyed, Winner = winner });
             return;
         }
 
         _currentTurn = (_currentTurn == PieceColor.White) ? PieceColor.Black : PieceColor.White;
+        OnTurnChanged?.Invoke(_currentTurn);
 
         bool inCheck = IsInCheck(_currentTurn);
         bool hasLegalMoves = HasAnyLegalMoves(_currentTurn);
@@ -574,6 +649,7 @@ public class ChessBoard : MonoBehaviour
             if (kingIdx >= 0)
                 SpawnFloatingTextStyled(_tilePositions[kingIdx], "Checkmate!", new Color(1f, 0.2f, 0.2f), 0f, 0f);
             Debug.Log($"[Chess] Checkmate! {winner} wins!");
+            OnGameOver?.Invoke(new MatchResult { Outcome = MatchOutcome.Checkmate, Winner = winner });
         }
         else if (!inCheck && !hasLegalMoves)
         {
@@ -582,6 +658,7 @@ public class ChessBoard : MonoBehaviour
             if (kingIdx >= 0)
                 SpawnFloatingTextStyled(_tilePositions[kingIdx], "Stalemate!", new Color(0.7f, 0.7f, 0.7f), 0f, 0f);
             Debug.Log("[Chess] Stalemate!");
+            OnGameOver?.Invoke(new MatchResult { Outcome = MatchOutcome.Stalemate, Winner = PieceColor.White });
         }
         else if (inCheck)
         {
@@ -1260,14 +1337,14 @@ public class ChessBoard : MonoBehaviour
         _     => "massive"
     };
 
-    private static string IndexToAlgebraic(int index)
+    public static string IndexToAlgebraic(int index)
     {
         int col = index % 8;
         int row = index / 8;
         return $"{(char)('a' + col)}{8 - row}";
     }
 
-    private static int AlgebraicToIndex(string notation)
+    public static int AlgebraicToIndex(string notation)
     {
         if (notation == null || notation.Length != 2) return -1;
         int col = notation[0] - 'a';
