@@ -12,6 +12,7 @@ public class GameManager : MonoBehaviour
 
     private IGameMode _currentMode;
     private OnlineGameMode _onlineMode;
+    private BoardLayoutData _activeLayout;
 
     public ChessBoard Board => _board;
     public GameUI GameUI => _gameUI;
@@ -32,6 +33,9 @@ public class GameManager : MonoBehaviour
 
     private void Start()
     {
+        ElementCollection.Load();
+        BoardLayout.Load();
+
         _gameUI.Hide();
         _menuUI.Show();
     }
@@ -41,15 +45,16 @@ public class GameManager : MonoBehaviour
         _currentMode?.OnUpdate();
     }
 
-    public void StartMatch(GameModeType modeType)
+    public void StartMatch(GameModeType modeType, BoardLayoutData layout = null)
     {
         // Wait for board to be initialized
         if (!_board.IsInitialized) return;
 
+        _activeLayout = layout;
         _menuUI.Hide();
 
         _board.SetFlipped(false);
-        _board.ResetBoard();
+        _board.ResetBoard(layout);
 
         // Create game mode
         switch (modeType)
@@ -68,6 +73,7 @@ public class GameManager : MonoBehaviour
         // Subscribe to board events
         _board.OnTurnChanged += OnTurnChanged;
         _board.OnGameOver += OnGameOverEvent;
+        _board.OnCaptureResult += OnCaptureForCollection;
 
         _currentMode.OnMatchStart(_board);
         _currentMode.OnTurnStart(PieceColor.White);
@@ -80,13 +86,14 @@ public class GameManager : MonoBehaviour
     /// Start an online match after room is ready and both players connected.
     /// Called by MenuUI when RoomManager.OnGameStart fires.
     /// </summary>
-    public void StartOnlineMatch(PieceColor localColor)
+    public void StartOnlineMatch(PieceColor localColor, BoardLayoutData layout = null)
     {
         if (!_board.IsInitialized) return;
 
+        _activeLayout = layout;
         _menuUI.Hide();
         _board.SetFlipped(localColor == PieceColor.Black);
-        _board.ResetBoard();
+        _board.ResetBoard(layout);
 
         _onlineMode = new OnlineGameMode();
         _onlineMode.SetRoom(_roomManager, localColor);
@@ -94,6 +101,7 @@ public class GameManager : MonoBehaviour
 
         _board.OnTurnChanged += OnTurnChanged;
         _board.OnGameOver += OnGameOverEvent;
+        _board.OnCaptureResult += OnCaptureForCollection;
 
         // Subscribe to online-specific events
         _roomManager.OnRematchStart += OnOnlineRematchStart;
@@ -118,6 +126,10 @@ public class GameManager : MonoBehaviour
 
         _board.OnTurnChanged -= OnTurnChanged;
         _board.OnGameOver -= OnGameOverEvent;
+        _board.OnCaptureResult -= OnCaptureForCollection;
+
+        if (!ElementCollection.HasPlayedBefore)
+            ElementCollection.HasPlayedBefore = true;
 
         if (_onlineMode != null)
         {
@@ -149,9 +161,10 @@ public class GameManager : MonoBehaviour
         _currentMode.OnDeactivate();
         _board.OnTurnChanged -= OnTurnChanged;
         _board.OnGameOver -= OnGameOverEvent;
+        _board.OnCaptureResult -= OnCaptureForCollection;
 
         _board.SetFlipped(false);
-        _board.ResetBoard();
+        _board.ResetBoard(_activeLayout);
 
         // Re-create fresh mode
         switch (modeType)
@@ -166,6 +179,7 @@ public class GameManager : MonoBehaviour
 
         _board.OnTurnChanged += OnTurnChanged;
         _board.OnGameOver += OnGameOverEvent;
+        _board.OnCaptureResult += OnCaptureForCollection;
 
         _currentMode.OnMatchStart(_board);
         _currentMode.OnTurnStart(PieceColor.White);
@@ -182,9 +196,10 @@ public class GameManager : MonoBehaviour
         _currentMode.OnDeactivate();
         _board.OnTurnChanged -= OnTurnChanged;
         _board.OnGameOver -= OnGameOverEvent;
+        _board.OnCaptureResult -= OnCaptureForCollection;
 
         _board.SetFlipped(localColor == PieceColor.Black);
-        _board.ResetBoard();
+        _board.ResetBoard(_activeLayout);
 
         _onlineMode = new OnlineGameMode();
         _onlineMode.SetRoom(_roomManager, localColor);
@@ -192,6 +207,7 @@ public class GameManager : MonoBehaviour
 
         _board.OnTurnChanged += OnTurnChanged;
         _board.OnGameOver += OnGameOverEvent;
+        _board.OnCaptureResult += OnCaptureForCollection;
 
         _currentMode.OnMatchStart(_board);
         _currentMode.OnTurnStart(PieceColor.White);
@@ -223,5 +239,30 @@ public class GameManager : MonoBehaviour
     {
         _currentMode?.OnMatchEnd(result);
         _gameUI.ShowGameOver(result);
+    }
+
+    private void OnCaptureForCollection(int from, int to, ElementMixResult mix, ElementReactionResult reaction)
+    {
+        if (mix == null || string.IsNullOrEmpty(mix.newElement)) return;
+
+        // At event time, _board[from] still has attacker with original element,
+        // _board[to] still has defender (board mutation happens after event)
+        ChessPiece attacker = _board.GetPieceAt(from);
+        ChessPiece defender = _board.GetPieceAt(to);
+        if (attacker == null || defender == null) return;
+
+        bool shouldCollect = _currentMode?.ModeType switch
+        {
+            GameModeType.Local => true,
+            GameModeType.VsAI => attacker.Color == PieceColor.White,
+            GameModeType.Online => _onlineMode != null && attacker.Color == _onlineMode.LocalColor,
+            _ => false
+        };
+
+        if (shouldCollect)
+        {
+            ElementCollection.AddElement(mix.newElement, mix.emoji, attacker.Element, defender.Element);
+            ElementCollection.Save();
+        }
     }
 }

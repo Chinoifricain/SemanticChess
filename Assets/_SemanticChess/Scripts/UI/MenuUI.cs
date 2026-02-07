@@ -29,6 +29,10 @@ public class MenuUI : MonoBehaviour
     [SerializeField] private TMP_Text _waitingText;
     [SerializeField] private Button _waitingCancelButton;
 
+    [Header("Board Config")]
+    [SerializeField] private BoardConfigUI _boardConfigUI;
+    [SerializeField] private Button _editLayoutButton;
+
     private readonly List<(RectTransform rt, Vector2 target)> _diffButtons = new();
     private readonly List<(RectTransform rt, Vector2 target)> _onlineButtons = new();
     private bool _difficultyOpen;
@@ -37,13 +41,16 @@ public class MenuUI : MonoBehaviour
     private Sequence _onlineTween;
 
     private PieceColor _assignedColor;
+    private GameModeType _pendingMode;
+    private int _pendingDifficulty;
+    private BoardLayoutData _onlineLayout;
 
     private void Awake()
     {
         _localButton.onClick.AddListener(() =>
         {
             FoldAll();
-            GameManager.Instance.StartMatch(GameModeType.Local);
+            StartWithConfig(GameModeType.Local, ConfigMode.Local);
         });
         _aiButton.onClick.AddListener(ToggleDifficulty);
 
@@ -65,6 +72,17 @@ public class MenuUI : MonoBehaviour
             _joinBackButton.onClick.AddListener(OnJoinBack);
         if (_waitingCancelButton != null)
             _waitingCancelButton.onClick.AddListener(OnWaitingCancel);
+
+        // Edit Layout button
+        if (_editLayoutButton != null)
+            _editLayoutButton.onClick.AddListener(OnEditLayout);
+
+        // Board config events
+        if (_boardConfigUI != null)
+        {
+            _boardConfigUI.OnConfigReady += OnConfigReady;
+            _boardConfigUI.OnConfigCancelled += OnConfigCancelled;
+        }
 
         // Set up AI difficulty sub-buttons (hidden behind parent)
         Button[] diffBtns = { _easyButton, _mediumButton, _hardButton };
@@ -144,8 +162,9 @@ public class MenuUI : MonoBehaviour
     {
         _difficultyOpen = false;
         _difficultyTween?.Kill();
+        _pendingDifficulty = difficulty;
         GameManager.Instance.AIDifficulty = difficulty;
-        GameManager.Instance.StartMatch(GameModeType.VsAI);
+        StartWithConfig(GameModeType.VsAI, ConfigMode.VsAI);
     }
 
     // --- Online ---
@@ -205,33 +224,13 @@ public class MenuUI : MonoBehaviour
     private void OnCreateRoom()
     {
         FoldAll();
-        _panel.SetActive(false);
-
-        var room = GameManager.Instance.RoomManager;
-        room.OnRoomJoined += OnRoomJoined;
-        room.OnGameStart += OnGameStart;
-        room.OnError += OnOnlineError;
-        room.CreateRoom();
-
-        ShowWaiting("Creating...");
+        StartWithConfig(GameModeType.Online, ConfigMode.OnlineWhite);
     }
 
     private void OnJoinRoomClicked()
     {
         FoldAll();
-        _panel.SetActive(false);
-
-        if (_joinPanel != null)
-        {
-            _joinPanel.SetActive(true);
-            PopChildButtons(_joinPanel);
-            if (_codeInput != null)
-            {
-                _codeInput.text = "";
-                _codeInput.ActivateInputField();
-                GameManager.Instance.RunCoroutine(FixCaretOrder(_codeInput));
-            }
-        }
+        StartWithConfig(GameModeType.Online, ConfigMode.OnlineBlack);
     }
 
     private void OnJoinBack()
@@ -278,9 +277,41 @@ public class MenuUI : MonoBehaviour
 
     private void OnGameStart()
     {
+        // Exchange board configs before starting the match
+        var room = GameManager.Instance.RoomManager;
+
+        // Send our layout to opponent
+        var ourSlots = BoardLayout.GetSlotsForColor(_assignedColor);
+        room.SendBoardConfig(ourSlots);
+
+        // Wait for opponent's config
+        room.OnOpponentBoardConfig += OnOpponentBoardConfig;
+        ShowWaiting("Syncing...");
+    }
+
+    private void OnOpponentBoardConfig(List<PieceSlotConfig> opponentSlots)
+    {
+        var room = GameManager.Instance.RoomManager;
+        room.OnOpponentBoardConfig -= OnOpponentBoardConfig;
+
+        // Build merged layout: our color's slots + opponent's slots
+        _onlineLayout = new BoardLayoutData();
+        var ourSlots = BoardLayout.GetSlotsForColor(_assignedColor);
+
+        if (_assignedColor == PieceColor.White)
+        {
+            _onlineLayout.whiteSlots = new List<PieceSlotConfig>(ourSlots);
+            _onlineLayout.blackSlots = new List<PieceSlotConfig>(opponentSlots);
+        }
+        else
+        {
+            _onlineLayout.blackSlots = new List<PieceSlotConfig>(ourSlots);
+            _onlineLayout.whiteSlots = new List<PieceSlotConfig>(opponentSlots);
+        }
+
         HideWaiting();
         UnsubscribeRoom();
-        GameManager.Instance.StartOnlineMatch(_assignedColor);
+        GameManager.Instance.StartOnlineMatch(_assignedColor, _onlineLayout);
     }
 
     private void OnOnlineError(string message)
@@ -330,6 +361,103 @@ public class MenuUI : MonoBehaviour
         var buttons = panel.GetComponentsInChildren<JuicyButton>(true);
         for (int i = 0; i < buttons.Length; i++)
             buttons[i].PlayAppear(i * 0.04f);
+    }
+
+    // --- Board Config ---
+
+    private ConfigMode _pendingConfigMode;
+
+    private void StartWithConfig(GameModeType mode, ConfigMode configMode)
+    {
+        _pendingMode = mode;
+        _pendingConfigMode = configMode;
+
+        // First game ever: skip config (except Edit Layout which always shows)
+        if (!ElementCollection.HasPlayedBefore && configMode != ConfigMode.EditOnly)
+        {
+            if (mode == GameModeType.Online)
+            {
+                _panel.SetActive(false);
+                if (configMode == ConfigMode.OnlineWhite)
+                    DoCreateRoom();
+                else
+                    ShowJoinCodePanel();
+            }
+            else
+            {
+                GameManager.Instance.StartMatch(mode);
+            }
+            return;
+        }
+
+        // Show config screen
+        _panel.SetActive(false);
+        _boardConfigUI.Show(configMode, GameManager.Instance.Board);
+    }
+
+    private void OnConfigReady(BoardLayoutData layout)
+    {
+        switch (_pendingConfigMode)
+        {
+            case ConfigMode.Local:
+                GameManager.Instance.StartMatch(GameModeType.Local, layout);
+                break;
+            case ConfigMode.VsAI:
+                GameManager.Instance.StartMatch(GameModeType.VsAI, layout);
+                break;
+            case ConfigMode.OnlineWhite:
+                DoCreateRoom();
+                break;
+            case ConfigMode.OnlineBlack:
+                ShowJoinCodePanel();
+                break;
+            case ConfigMode.EditOnly:
+                _panel.SetActive(true);
+                PopChildButtons(_panel);
+                break;
+        }
+    }
+
+    private void OnConfigCancelled()
+    {
+        _panel.SetActive(true);
+        PopChildButtons(_panel);
+    }
+
+    private void OnEditLayout()
+    {
+        FoldAll();
+        StartWithConfig(default, ConfigMode.EditOnly);
+    }
+
+    private void DoCreateRoom()
+    {
+        _panel.SetActive(false);
+
+        var room = GameManager.Instance.RoomManager;
+        room.OnRoomJoined += OnRoomJoined;
+        room.OnGameStart += OnGameStart;
+        room.OnError += OnOnlineError;
+        room.CreateRoom();
+
+        ShowWaiting("Creating...");
+    }
+
+    private void ShowJoinCodePanel()
+    {
+        _panel.SetActive(false);
+
+        if (_joinPanel != null)
+        {
+            _joinPanel.SetActive(true);
+            PopChildButtons(_joinPanel);
+            if (_codeInput != null)
+            {
+                _codeInput.text = "";
+                _codeInput.ActivateInputField();
+                GameManager.Instance.RunCoroutine(FixCaretOrder(_codeInput));
+            }
+        }
     }
 
     // --- Show/Hide ---

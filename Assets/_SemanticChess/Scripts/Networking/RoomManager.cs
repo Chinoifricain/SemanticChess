@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -29,6 +30,7 @@ public class RoomManager : MonoBehaviour
     public event Action OnRematchRequested;
     public event Action OnRematchStart;
     public event Action<string> OnError;
+    public event Action<List<PieceSlotConfig>> OnOpponentBoardConfig;
 
     private void Update()
     {
@@ -57,6 +59,19 @@ public class RoomManager : MonoBehaviour
         string mixJson = JsonUtility.ToJson(mix);
         string reactionJson = SerializeReaction(reaction);
         _ws?.Send($"{{\"type\":\"capture_result\",\"from\":{from},\"to\":{to},\"mix\":{mixJson},\"reaction\":{reactionJson}}}");
+    }
+
+    public void SendBoardConfig(List<PieceSlotConfig> slots)
+    {
+        var sb = new StringBuilder();
+        sb.Append("{\"type\":\"board_config\",\"slots\":[");
+        for (int i = 0; i < slots.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(JsonUtility.ToJson(slots[i]));
+        }
+        sb.Append("]}");
+        _ws?.Send(sb.ToString());
     }
 
     public void SendHover(int index)
@@ -185,6 +200,11 @@ public class RoomManager : MonoBehaviour
                 var mix = ParseMixFromRaw(raw);
                 var reaction = ParseReactionFromRaw(raw);
                 OnOpponentCaptureResult?.Invoke(msg.from, msg.to, mix, reaction);
+                break;
+
+            case "opponent_board_config":
+                var configSlots = ParseBoardConfigSlots(raw);
+                OnOpponentBoardConfig?.Invoke(configSlots);
                 break;
 
             case "opponent_hover":
@@ -437,6 +457,65 @@ public class RoomManager : MonoBehaviour
             piece_type = ExtractStringField(json, "piece_type"),
             duration = ExtractIntField(json, "duration", 0)
         };
+    }
+
+    private List<PieceSlotConfig> ParseBoardConfigSlots(string raw)
+    {
+        var result = new List<PieceSlotConfig>();
+        try
+        {
+            // Find the "slots" array
+            string marker = "\"slots\"";
+            int idx = raw.IndexOf(marker, StringComparison.Ordinal);
+            if (idx < 0) return result;
+
+            int arrStart = raw.IndexOf('[', idx + marker.Length);
+            if (arrStart < 0) return result;
+
+            int depth = 0, arrEnd = -1;
+            bool inStr = false;
+            for (int i = arrStart; i < raw.Length; i++)
+            {
+                if (inStr) { if (raw[i] == '\\') { i++; continue; } if (raw[i] == '"') inStr = false; continue; }
+                if (raw[i] == '"') { inStr = true; continue; }
+                if (raw[i] == '[') depth++;
+                else if (raw[i] == ']') { depth--; if (depth == 0) { arrEnd = i; break; } }
+            }
+            if (arrEnd < 0) return result;
+
+            string content = raw[(arrStart + 1)..arrEnd];
+            depth = 0;
+            int objStart = -1;
+            inStr = false;
+
+            for (int i = 0; i < content.Length; i++)
+            {
+                if (inStr) { if (content[i] == '\\') { i++; continue; } if (content[i] == '"') inStr = false; continue; }
+                if (content[i] == '"') { inStr = true; continue; }
+                if (content[i] == '{') { if (depth == 0) objStart = i; depth++; }
+                else if (content[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0 && objStart >= 0)
+                    {
+                        string objJson = content[objStart..(i + 1)];
+                        var slot = new PieceSlotConfig
+                        {
+                            index = ExtractIntField(objJson, "index", 0),
+                            element = ExtractStringField(objJson, "element") ?? "",
+                            emoji = ExtractStringField(objJson, "emoji") ?? ""
+                        };
+                        result.Add(slot);
+                        objStart = -1;
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[RoomManager] Failed to parse board config: {e.Message}");
+        }
+        return result;
     }
 
     // --- Data Structures ---

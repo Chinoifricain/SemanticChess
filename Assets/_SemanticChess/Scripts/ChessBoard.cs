@@ -53,8 +53,10 @@ public class ChessBoard : MonoBehaviour
     private ElementService _elementService;
     private EmojiLoader _emojiService;
 
-    private static readonly string[] BackRankElements = { "Water", "Fire", "Plant", "Air", "Water", "Plant", "Fire", "Air" };
-    private static readonly string[] PawnElements =     { "Fire", "Plant", "Water", "Air", "Fire", "Plant", "Water", "Air" };
+    public static readonly string[] BackRankElements = { "Water", "Fire", "Plant", "Air", "Water", "Plant", "Fire", "Air" };
+    public static readonly string[] PawnElements =     { "Fire", "Plant", "Water", "Air", "Fire", "Plant", "Water", "Air" };
+
+    private BoardLayoutData _activeLayout;
 
     private static readonly Dictionary<string, string> BaseEmojis = new()
     {
@@ -105,6 +107,8 @@ public class ChessBoard : MonoBehaviour
     public SpriteRenderer BoardSprite => _boardSprite;
     public bool IsFlipped => _flipped;
     public ElementService ElementService => _elementService;
+    public EmojiLoader EmojiService => _emojiService;
+    public TMP_FontAsset FloatingTextFont => _floatingTextFont;
     public ChessPiece GetPieceAt(int index) => (index >= 0 && index < 64) ? _board[index] : null;
 
     // --- Events ---
@@ -395,8 +399,10 @@ public class ChessBoard : MonoBehaviour
     /// Reset the board for a new game. Clears all pieces, effects, and state,
     /// then sets up a fresh starting position.
     /// </summary>
-    public void ResetBoard()
+    public void ResetBoard(BoardLayoutData layout = null)
     {
+        _activeLayout = layout;
+
         StopAllCoroutines();
 
         // Kill all tweens
@@ -457,6 +463,14 @@ public class ChessBoard : MonoBehaviour
         OnBoardReset?.Invoke();
     }
 
+    /// <summary>
+    /// Set up the board visually for the config screen (no game state).
+    /// </summary>
+    public void SetupForConfig(BoardLayoutData layout)
+    {
+        ResetBoard(layout);
+    }
+
     // --- Input ---
 
     private void Update()
@@ -509,11 +523,31 @@ public class ChessBoard : MonoBehaviour
         ChessPiece piece = go.GetComponent<ChessPiece>();
         piece.Init(type, color);
 
-        int col = index % 8;
-        int row = index / 8;
-        bool isPawn = (color == PieceColor.White) ? row == 6 : row == 1;
-        string element = isPawn ? PawnElements[col] : BackRankElements[col];
-        string emoji = BaseEmojis.TryGetValue(element, out string e) ? e : "";
+        // Check custom layout first
+        string element = null;
+        string emoji = null;
+
+        if (_activeLayout != null)
+        {
+            var slots = color == PieceColor.White ? _activeLayout.whiteSlots : _activeLayout.blackSlots;
+            var custom = slots?.Find(s => s.index == index);
+            if (custom != null)
+            {
+                element = custom.element;
+                emoji = custom.emoji;
+            }
+        }
+
+        // Fall back to defaults
+        if (element == null)
+        {
+            int col = index % 8;
+            int row = index / 8;
+            bool isPawn = (color == PieceColor.White) ? row == 6 : row == 1;
+            element = isPawn ? PawnElements[col] : BackRankElements[col];
+            emoji = BaseEmojis.TryGetValue(element, out string e) ? e : "";
+        }
+
         piece.SetElement(element, emoji, _emojiService, _floatingTextFont);
 
         _board[index] = piece;
