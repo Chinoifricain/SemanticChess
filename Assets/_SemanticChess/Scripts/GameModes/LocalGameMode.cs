@@ -45,6 +45,7 @@ public class LocalGameMode : IGameMode
         {
             _board.DeselectPiece();
             _board.SetHoveredIndex(-1);
+            _board.SetHoveredTileIndex(-1);
         }
         Time.timeScale = 1f;
     }
@@ -59,6 +60,7 @@ public class LocalGameMode : IGameMode
             newHovered = index;
 
         _board.SetHoveredIndex(newHovered);
+        _board.SetHoveredTileIndex(index);
     }
 
     private void OnTileClicked(int index)

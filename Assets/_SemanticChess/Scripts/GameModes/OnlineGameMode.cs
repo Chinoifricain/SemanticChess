@@ -87,6 +87,7 @@ public class OnlineGameMode : IGameMode
             newHovered = index;
 
         _board.SetHoveredIndex(newHovered);
+        _board.SetHoveredTileIndex(index);
     }
 
     public void OnDeactivate()

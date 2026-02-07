@@ -38,6 +38,9 @@ public class ChessBoard : MonoBehaviour
     [Header("Floating Text")]
     [SerializeField] private TMP_FontAsset _floatingTextFont;
 
+    [Header("Tile Coordinates")]
+    [SerializeField] private TMP_FontAsset _tileCoordFont;
+
     private readonly ChessPiece[] _board = new ChessPiece[64];
     public ChessPiece GetPiece(int index) => _board[index];
 
@@ -89,6 +92,9 @@ public class ChessBoard : MonoBehaviour
     private bool _isPlayingReaction;
     private bool _gameOver;
     private int _hoveredIndex = -1;
+    private int _hoveredTileIndex = -1;
+    private TextMeshPro _tileCoordLabel;
+    private Tween _tileCoordTween;
 
     // --- Public API ---
     public PieceColor CurrentTurn => _currentTurn;
@@ -152,6 +158,19 @@ public class ChessBoard : MonoBehaviour
         _emojiService = gameObject.AddComponent<EmojiLoader>();
 
         ComputeTilePositions();
+
+        // Tile coordinate label (shown on hover)
+        GameObject coordGo = new GameObject("TileCoordLabel");
+        coordGo.transform.SetParent(transform, false);
+        _tileCoordLabel = coordGo.AddComponent<TextMeshPro>();
+        _tileCoordLabel.rectTransform.sizeDelta = new Vector2(1f, 0.3f);
+        if (_tileCoordFont != null) _tileCoordLabel.font = _tileCoordFont;
+        _tileCoordLabel.fontSize = 2f;
+        _tileCoordLabel.alignment = TextAlignmentOptions.Center;
+        _tileCoordLabel.color = new Color(1f, 1f, 1f, 0.45f);
+        _tileCoordLabel.raycastTarget = false;
+        _tileCoordLabel.sortingOrder = 10;
+        coordGo.SetActive(false);
 
         // Track scene children so ResetBoard doesn't destroy them
         foreach (Transform child in transform)
@@ -259,6 +278,27 @@ public class ChessBoard : MonoBehaviour
             _board[_hoveredIndex].ShowHover(true);
 
         OnHoverChanged?.Invoke(index);
+    }
+
+    public void SetHoveredTileIndex(int index)
+    {
+        if (index == _hoveredTileIndex) return;
+        _hoveredTileIndex = index;
+
+        _tileCoordTween?.Kill();
+
+        if (index < 0)
+        {
+            _tileCoordLabel.gameObject.SetActive(false);
+            return;
+        }
+
+        float half = _tileSize * 0.5f;
+        _tileCoordLabel.transform.localPosition = _tilePositions[index] + new Vector3(-half + _tileSize * 0.15f, -half + _tileSize * 0.15f, 0f);
+        _tileCoordLabel.text = IndexToAlgebraic(index);
+        _tileCoordLabel.transform.localScale = Vector3.one * 2.0f;
+        _tileCoordLabel.gameObject.SetActive(true);
+        _tileCoordTween = _tileCoordLabel.transform.DOScale(Vector3.one, 0.08f).SetEase(Ease.OutCubic);
     }
 
     // --- AI Helpers ---
