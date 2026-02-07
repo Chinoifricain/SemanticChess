@@ -1554,6 +1554,73 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 406759883}
   m_CullTransparentMesh: 1
+--- !u!1 &431824856
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 431824858}
+  - component: {fileID: 431824857}
+  m_Layer: 0
+  m_Name: CapturedPieceDisplay
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &431824857
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 431824856}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2debc5ccfa478384fbe74c1f97714e1f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _board: {fileID: 457942591}
+  _spriteEntries:
+  - pieceType: 0
+    whiteSprite: {fileID: 21300000, guid: 5d666730f51029f42a2111332da55d9a, type: 3}
+    blackSprite: {fileID: 21300000, guid: 45adb30e3bb234446801bd9e4818a1ae, type: 3}
+  - pieceType: 1
+    whiteSprite: {fileID: 21300000, guid: 58ac601d847c19a4faa2337275d0d6ee, type: 3}
+    blackSprite: {fileID: 21300000, guid: 8ef77bcdfa0681b42812fa2b2e49a386, type: 3}
+  - pieceType: 2
+    whiteSprite: {fileID: 21300000, guid: d87e6cce939d3044aa0a109a436098c3, type: 3}
+    blackSprite: {fileID: 21300000, guid: 1bb0841682c4e1c4b85b23b52680413f, type: 3}
+  - pieceType: 3
+    whiteSprite: {fileID: 21300000, guid: e34fc8c953cefa945b4d54db68221e23, type: 3}
+    blackSprite: {fileID: 21300000, guid: 58d6878e1a148f941b9ccb64fbb9d9ab, type: 3}
+  - pieceType: 4
+    whiteSprite: {fileID: 21300000, guid: beeeff0854ec5514e8e3da7dc6507022, type: 3}
+    blackSprite: {fileID: 21300000, guid: 2b3850e3c5d7f934193160df4bee989c, type: 3}
+  - pieceType: 5
+    whiteSprite: {fileID: 21300000, guid: 4a915fce7ace01c43a2f9baa975e10d9, type: 3}
+    blackSprite: {fileID: 21300000, guid: aca2883793359864cba672f9b793279c, type: 3}
+  _pieceScale: 0.6
+  _spacing: 0.5
+  _margin: 0.3
+--- !u!4 &431824858
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 431824856}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 457942590}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &438633269
 GameObject:
   m_ObjectHideFlags: 0
@@ -1742,6 +1809,7 @@ Transform:
   m_Children:
   - {fileID: 1713042050}
   - {fileID: 97130975}
+  - {fileID: 431824858}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &457942591

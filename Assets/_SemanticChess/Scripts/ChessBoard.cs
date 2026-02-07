@@ -13,6 +13,12 @@ public struct TileEffectSpriteEntry
     public Sprite sprite;
 }
 
+public struct CapturedPieceInfo
+{
+    public PieceType PieceType;
+    public PieceColor Color;
+}
+
 [DefaultExecutionOrder(-1)]
 public class ChessBoard : MonoBehaviour
 {
@@ -63,6 +69,10 @@ public class ChessBoard : MonoBehaviour
     private readonly int[] _plantTurnCount = new int[64];
     private readonly Dictionary<TileEffect, GameObject> _tileEffectVisuals = new Dictionary<TileEffect, GameObject>();
 
+    // --- Captured Pieces ---
+    private readonly List<CapturedPieceInfo> _capturedWhitePieces = new List<CapturedPieceInfo>();
+    private readonly List<CapturedPieceInfo> _capturedBlackPieces = new List<CapturedPieceInfo>();
+
     // --- Board attraction ---
     private const float BoardAttractRadius = 12f;
     private const float BoardAttractStrength = 0.03f;
@@ -87,6 +97,7 @@ public class ChessBoard : MonoBehaviour
     public bool IsPlayingReaction => _isPlayingReaction;
     public int SelectedIndex => _selectedIndex;
     public SpriteRenderer BoardSprite => _boardSprite;
+    public bool IsFlipped => _flipped;
     public ElementService ElementService => _elementService;
 
     // --- Events ---
@@ -97,6 +108,8 @@ public class ChessBoard : MonoBehaviour
     public event Action<int> OnHoverChanged;
     public event Action<int> OnPieceSelected;
     public event Action OnPieceDeselected;
+    public event Action<CapturedPieceInfo> OnPieceCaptured;
+    public event Action OnBoardReset;
 
     // --- Online: pre-computed reaction from opponent ---
     private ElementMixResult _pendingMix;
@@ -394,10 +407,13 @@ public class ChessBoard : MonoBehaviour
         _validMoves.Clear();
         _indicators.Clear();
         _tileEffectVisuals.Clear();
+        _capturedWhitePieces.Clear();
+        _capturedBlackPieces.Clear();
 
         Time.timeScale = 1f;
 
         SetupBoard();
+        OnBoardReset?.Invoke();
     }
 
     // --- Input ---
@@ -649,6 +665,7 @@ public class ChessBoard : MonoBehaviour
         yield return new WaitForSeconds(tradeDuration);
 
         // Resolve capture
+        RecordCapture(defender);
         Destroy(defender.gameObject);
         _board[to] = attacker;
         _board[from] = null;
@@ -1099,6 +1116,18 @@ public class ChessBoard : MonoBehaviour
         return false;
     }
 
+    // --- Captured Pieces ---
+
+    private void RecordCapture(ChessPiece piece)
+    {
+        var info = new CapturedPieceInfo { PieceType = piece.PieceType, Color = piece.Color };
+        if (piece.Color == PieceColor.White)
+            _capturedWhitePieces.Add(info);
+        else
+            _capturedBlackPieces.Add(info);
+        OnPieceCaptured?.Invoke(info);
+    }
+
     // --- Effects ---
 
     public void ApplyEffect(int index, ChessEffect effect)
@@ -1113,6 +1142,7 @@ public class ChessBoard : MonoBehaviour
                 SpawnFloatingText(index, "Destroy!");
                 if (index == _selectedIndex) Deselect();
                 _board[index] = null;
+                RecordCapture(piece);
                 Destroy(piece.gameObject);
                 return;
 
@@ -1656,8 +1686,6 @@ public class ChessBoard : MonoBehaviour
         int capRow = captureIndex / 8;
         var cells = new List<int>();
 
-        distance = Mathf.Clamp(distance, 0, 7);
-
         switch (pattern)
         {
             case "+":
@@ -1710,7 +1738,6 @@ public class ChessBoard : MonoBehaviour
     private static void ResolveForward(int capCol, int capRow, int distance, PieceColor attackerColor, List<int> cells)
     {
         int dir = (attackerColor == PieceColor.White) ? -1 : 1;
-        distance = Mathf.Clamp(distance, 1, 2);
 
         for (int step = 1; step <= distance; step++)
         {
