@@ -57,6 +57,7 @@ public class ElementService : MonoBehaviour
     private const string API_URL = "https://api-relay.raphael-tan-fr.workers.dev/gemini";
     private const string API_TOKEN = "mrMPhQ9eazu1YYD";
     private const string MODEL = "gemini-2.0-flash";
+    private const string MERGE_URL = "https://semantic-chess-rooms.raphael-tan-fr.workers.dev";
 
     private readonly Dictionary<string, ElementMixResult> _cache = new();
 
@@ -130,6 +131,66 @@ public class ElementService : MonoBehaviour
     }
 
     public void ClearCache() => _cache.Clear();
+
+    // ─── Persistent Merge Server ─────────────────────────────────────────
+
+    /// <summary>Check the persistent merge server for a cached mix result (L2 cache).</summary>
+    public IEnumerator CheckServerMerge(string atkElem, string defElem, Action<ElementMixResult> callback)
+    {
+        string key = GetCacheKey(atkElem, defElem);
+        string encodedKey = UnityWebRequest.EscapeURL(key);
+
+        using var www = UnityWebRequest.Get($"{MERGE_URL}/merges/{encodedKey}");
+        www.timeout = 5;
+        yield return www.SendWebRequest();
+
+        if (www.result != UnityWebRequest.Result.Success)
+        {
+            Debug.Log($"[ElementService] Merge server lookup failed: {www.error}");
+            callback?.Invoke(null);
+            yield break;
+        }
+
+        string response = www.downloadHandler.text;
+        if (response.Contains("\"found\":true") || response.Contains("\"found\": true"))
+        {
+            string mixJson = ExtractSubObject(response, "mix");
+            if (mixJson != null)
+            {
+                var result = JsonUtility.FromJson<ElementMixResult>(mixJson);
+                if (!string.IsNullOrEmpty(result?.newElement))
+                {
+                    _cache[key] = result;
+                    Debug.Log($"[ElementService] L2 hit: {key} → {result.newElement}");
+                    callback?.Invoke(result);
+                    yield break;
+                }
+            }
+        }
+
+        callback?.Invoke(null);
+    }
+
+    /// <summary>Save a mix result to the persistent merge server (fire-and-forget).</summary>
+    public IEnumerator SaveServerMerge(string atkElem, string defElem, ElementMixResult mix)
+    {
+        string key = GetCacheKey(atkElem, defElem);
+        string mixJson = JsonUtility.ToJson(mix);
+        string body = $"{{\"key\":\"{key}\",\"mix\":{mixJson}}}";
+
+        using var www = new UnityWebRequest($"{MERGE_URL}/merges", "POST");
+        www.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
+        www.downloadHandler = new DownloadHandlerBuffer();
+        www.SetRequestHeader("Content-Type", "application/json");
+        www.timeout = 10;
+
+        yield return www.SendWebRequest();
+
+        if (www.result != UnityWebRequest.Result.Success)
+            Debug.LogWarning($"[ElementService] Failed to save merge: {www.error}");
+        else
+            Debug.Log($"[ElementService] Saved merge: {key} → {mix.newElement}");
+    }
 
     // ─── HTTP Request ───────────────────────────────────────────────────
 

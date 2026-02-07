@@ -573,7 +573,7 @@ public class ChessBoard : MonoBehaviour
 
             if (mixWasCached)
             {
-                // Path B: cached mix — get it instantly, fire reaction call in background
+                // L1 hit: cached mix — get it instantly, fire reaction call in background
                 yield return _elementService.GetElementMix(atkElem, defElem, r => mixResult = r);
 
                 StartCoroutine(_elementService.GetElementReaction(
@@ -582,10 +582,27 @@ public class ChessBoard : MonoBehaviour
             }
             else
             {
-                // Path A: combined mix + reaction in one API call
-                yield return _elementService.GetElementMixAndReaction(
-                    atkElem, defElem, reactionCtx,
-                    (mix, reaction) => { mixResult = mix; reactionResult = reaction; });
+                // L1 miss: check persistent server (L2)
+                yield return _elementService.CheckServerMerge(atkElem, defElem, r => mixResult = r);
+
+                if (mixResult != null)
+                {
+                    // L2 hit: mix loaded from server (now in L1 too), fetch fresh reaction
+                    StartCoroutine(_elementService.GetElementReaction(
+                        mixResult, reactionCtx,
+                        r => reactionResult = r));
+                }
+                else
+                {
+                    // L2 miss: combined AI call for mix + reaction
+                    yield return _elementService.GetElementMixAndReaction(
+                        atkElem, defElem, reactionCtx,
+                        (mix, reaction) => { mixResult = mix; reactionResult = reaction; });
+
+                    // Save to persistent server in background
+                    if (mixResult != null)
+                        StartCoroutine(_elementService.SaveServerMerge(atkElem, defElem, mixResult));
+                }
             }
         }
 
@@ -1948,6 +1965,7 @@ public class ChessBoard : MonoBehaviour
                     int duration = entry.duration;
                     if (tileType == TileEffectType.Burning && duration < 3) duration = 3;
                     if (duration <= 0) duration = 4;
+                    duration++; // +1: effects tick on the same turn they're applied
 
                     entryEffects.Add(new ValidatedEffect
                     {
@@ -1993,6 +2011,10 @@ public class ChessBoard : MonoBehaviour
 
                     if (fx.Duration <= 0 && effectType != EffectType.Damage && effectType != EffectType.Cleanse)
                         fx.Duration = effectType == EffectType.Poison ? 3 : 1;
+
+                    // +1: effects tick on the same turn they're applied
+                    if (effectType != EffectType.Damage && effectType != EffectType.Cleanse)
+                        fx.Duration++;
 
                     if (effectType == EffectType.Push)
                     {
