@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using DG.Tweening;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -15,24 +16,59 @@ public class MenuUI : MonoBehaviour
     [SerializeField] private Button _mediumButton;
     [SerializeField] private Button _hardButton;
 
+    [Header("Online (children of Online button)")]
+    [SerializeField] private Button _createRoomButton;
+    [SerializeField] private Button _joinRoomButton;
+
+    [Header("Online Panels")]
+    [SerializeField] private GameObject _joinPanel;
+    [SerializeField] private TMP_InputField _codeInput;
+    [SerializeField] private Button _joinConfirmButton;
+    [SerializeField] private Button _joinBackButton;
+    [SerializeField] private GameObject _waitingPanel;
+    [SerializeField] private TMP_Text _waitingText;
+    [SerializeField] private Button _waitingCancelButton;
+
     private readonly List<(RectTransform rt, Vector2 target)> _diffButtons = new();
+    private readonly List<(RectTransform rt, Vector2 target)> _onlineButtons = new();
     private bool _difficultyOpen;
+    private bool _onlineOpen;
     private Sequence _difficultyTween;
+    private Sequence _onlineTween;
+
+    private PieceColor _assignedColor;
 
     private void Awake()
     {
-        _localButton.onClick.AddListener(() => GameManager.Instance.StartMatch(GameModeType.Local));
+        _localButton.onClick.AddListener(() =>
+        {
+            FoldAll();
+            GameManager.Instance.StartMatch(GameModeType.Local);
+        });
         _aiButton.onClick.AddListener(ToggleDifficulty);
 
         _easyButton.onClick.AddListener(() => StartAI(0));
         _mediumButton.onClick.AddListener(() => StartAI(1));
         _hardButton.onClick.AddListener(() => StartAI(2));
 
-        _onlineButton.interactable = false;
+        // Online sub-buttons
+        _onlineButton.onClick.AddListener(ToggleOnline);
+        _onlineButton.interactable = true;
 
-        // Buttons are children of the AI button — local (0,0) = hidden behind parent
-        Button[] btns = { _easyButton, _mediumButton, _hardButton };
-        foreach (var btn in btns)
+        if (_createRoomButton != null)
+            _createRoomButton.onClick.AddListener(OnCreateRoom);
+        if (_joinRoomButton != null)
+            _joinRoomButton.onClick.AddListener(OnJoinRoomClicked);
+        if (_joinConfirmButton != null)
+            _joinConfirmButton.onClick.AddListener(OnJoinConfirm);
+        if (_joinBackButton != null)
+            _joinBackButton.onClick.AddListener(OnJoinBack);
+        if (_waitingCancelButton != null)
+            _waitingCancelButton.onClick.AddListener(OnWaitingCancel);
+
+        // Set up AI difficulty sub-buttons (hidden behind parent)
+        Button[] diffBtns = { _easyButton, _mediumButton, _hardButton };
+        foreach (var btn in diffBtns)
         {
             var rt = btn.GetComponent<RectTransform>();
             _diffButtons.Add((rt, rt.anchoredPosition));
@@ -40,10 +76,29 @@ public class MenuUI : MonoBehaviour
             rt.localScale = Vector3.zero;
             btn.gameObject.SetActive(false);
         }
+
+        // Set up online sub-buttons (same pattern)
+        Button[] onlineBtns = { _createRoomButton, _joinRoomButton };
+        foreach (var btn in onlineBtns)
+        {
+            if (btn == null) continue;
+            var rt = btn.GetComponent<RectTransform>();
+            _onlineButtons.Add((rt, rt.anchoredPosition));
+            rt.anchoredPosition = Vector2.zero;
+            rt.localScale = Vector3.zero;
+            btn.gameObject.SetActive(false);
+        }
+
+        // Hide panels
+        if (_joinPanel != null) _joinPanel.SetActive(false);
+        if (_waitingPanel != null) _waitingPanel.SetActive(false);
     }
+
+    // --- AI Difficulty ---
 
     private void ToggleDifficulty()
     {
+        if (_onlineOpen) FoldOnline();
         if (_difficultyOpen) FoldDifficulty();
         else UnfoldDifficulty();
     }
@@ -93,9 +148,196 @@ public class MenuUI : MonoBehaviour
         GameManager.Instance.StartMatch(GameModeType.VsAI);
     }
 
+    // --- Online ---
+
+    private void ToggleOnline()
+    {
+        if (_difficultyOpen) FoldDifficulty();
+        if (_onlineOpen) FoldOnline();
+        else UnfoldOnline();
+    }
+
+    private void UnfoldOnline()
+    {
+        _onlineOpen = true;
+        _onlineTween?.Kill();
+        _onlineTween = DOTween.Sequence();
+
+        for (int i = 0; i < _onlineButtons.Count; i++)
+        {
+            var (rt, target) = _onlineButtons[i];
+            rt.gameObject.SetActive(true);
+            float delay = i * 0.04f;
+            _onlineTween.Insert(delay, rt.DOAnchorPos(target, 0.25f).SetEase(Ease.OutBack));
+            _onlineTween.Insert(delay, rt.DOScale(Vector3.one, 0.2f).SetEase(Ease.OutBack));
+        }
+    }
+
+    private void FoldOnline()
+    {
+        _onlineOpen = false;
+        _onlineTween?.Kill();
+        _onlineTween = DOTween.Sequence();
+
+        for (int i = _onlineButtons.Count - 1; i >= 0; i--)
+        {
+            var (rt, _) = _onlineButtons[i];
+            float delay = (_onlineButtons.Count - 1 - i) * 0.03f;
+            _onlineTween.Insert(delay, rt.DOAnchorPos(Vector2.zero, 0.18f).SetEase(Ease.InBack));
+            _onlineTween.Insert(delay, rt.DOScale(Vector3.zero, 0.15f).SetEase(Ease.InBack));
+        }
+
+        _onlineTween.OnComplete(() =>
+        {
+            foreach (var (rt, _) in _onlineButtons)
+                rt.gameObject.SetActive(false);
+        });
+    }
+
+    private void FoldAll()
+    {
+        if (_difficultyOpen) FoldDifficulty();
+        if (_onlineOpen) FoldOnline();
+    }
+
+    // --- Online Flow ---
+
+    private void OnCreateRoom()
+    {
+        FoldAll();
+        _panel.SetActive(false);
+
+        var room = GameManager.Instance.RoomManager;
+        room.OnRoomJoined += OnRoomJoined;
+        room.OnGameStart += OnGameStart;
+        room.OnError += OnOnlineError;
+        room.CreateRoom();
+
+        ShowWaiting("Creating...");
+    }
+
+    private void OnJoinRoomClicked()
+    {
+        FoldAll();
+        _panel.SetActive(false);
+
+        if (_joinPanel != null)
+        {
+            _joinPanel.SetActive(true);
+            PopChildButtons(_joinPanel);
+            if (_codeInput != null)
+            {
+                _codeInput.text = "";
+                _codeInput.ActivateInputField();
+                GameManager.Instance.RunCoroutine(FixCaretOrder(_codeInput));
+            }
+        }
+    }
+
+    private void OnJoinBack()
+    {
+        if (_joinPanel != null) _joinPanel.SetActive(false);
+        _panel.SetActive(true);
+        PopChildButtons(_panel);
+    }
+
+    private void OnJoinConfirm()
+    {
+        string code = _codeInput != null ? _codeInput.text.Trim().ToUpper() : "";
+        if (code.Length != 4)
+        {
+            Debug.LogWarning("[MenuUI] Room code must be 4 characters");
+            return;
+        }
+
+        if (_joinPanel != null) _joinPanel.SetActive(false);
+
+        var room = GameManager.Instance.RoomManager;
+        room.OnRoomJoined += OnRoomJoined;
+        room.OnGameStart += OnGameStart;
+        room.OnError += OnOnlineError;
+        room.JoinRoom(code);
+
+        ShowWaiting("...");
+    }
+
+    private void OnWaitingCancel()
+    {
+        HideWaiting();
+        UnsubscribeRoom();
+        GameManager.Instance.RoomManager.Disconnect();
+        _panel.SetActive(true);
+        PopChildButtons(_panel);
+    }
+
+    private void OnRoomJoined(string code, PieceColor color)
+    {
+        _assignedColor = color;
+        ShowWaiting($"{code}");
+    }
+
+    private void OnGameStart()
+    {
+        HideWaiting();
+        UnsubscribeRoom();
+        GameManager.Instance.StartOnlineMatch(_assignedColor);
+    }
+
+    private void OnOnlineError(string message)
+    {
+        Debug.LogError($"[MenuUI] Online error: {message}");
+        HideWaiting();
+        UnsubscribeRoom();
+        _panel.SetActive(true);
+        PopChildButtons(_panel);
+    }
+
+    private void UnsubscribeRoom()
+    {
+        var room = GameManager.Instance.RoomManager;
+        room.OnRoomJoined -= OnRoomJoined;
+        room.OnGameStart -= OnGameStart;
+        room.OnError -= OnOnlineError;
+    }
+
+    private static System.Collections.IEnumerator FixCaretOrder(TMP_InputField input)
+    {
+        yield return null; // wait one frame for caret to be created
+        Transform caret = input.transform.Find("Caret");
+        if (caret != null)
+            caret.SetAsLastSibling();
+    }
+
+    private void ShowWaiting(string text)
+    {
+        if (_waitingPanel != null)
+        {
+            _waitingPanel.SetActive(true);
+            if (_waitingText != null)
+                _waitingText.text = text;
+            PopChildButtons(_waitingPanel);
+        }
+    }
+
+    private void HideWaiting()
+    {
+        if (_waitingPanel != null)
+            _waitingPanel.SetActive(false);
+    }
+
+    private static void PopChildButtons(GameObject panel)
+    {
+        var buttons = panel.GetComponentsInChildren<JuicyButton>(true);
+        for (int i = 0; i < buttons.Length; i++)
+            buttons[i].PlayAppear(i * 0.04f);
+    }
+
+    // --- Show/Hide ---
+
     public void Show()
     {
         _panel.SetActive(true);
+        PopChildButtons(_panel);
         _difficultyOpen = false;
         _difficultyTween?.Kill();
         foreach (var (rt, _) in _diffButtons)
@@ -104,6 +346,18 @@ public class MenuUI : MonoBehaviour
             rt.localScale = Vector3.zero;
             rt.gameObject.SetActive(false);
         }
+
+        _onlineOpen = false;
+        _onlineTween?.Kill();
+        foreach (var (rt, _) in _onlineButtons)
+        {
+            rt.anchoredPosition = Vector2.zero;
+            rt.localScale = Vector3.zero;
+            rt.gameObject.SetActive(false);
+        }
+
+        HideWaiting();
+        if (_joinPanel != null) _joinPanel.SetActive(false);
     }
 
     public void Hide()

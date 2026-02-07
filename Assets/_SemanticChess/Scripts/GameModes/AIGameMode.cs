@@ -55,6 +55,26 @@ public class AIGameMode : IGameMode
         _localInput.OnDeactivate();
     }
 
+    private bool PathCrossesOccupied(int from, int to)
+    {
+        int fc = from % 8, fr = from / 8;
+        int tc = to % 8, tr = to / 8;
+        int dc = System.Math.Sign(tc - fc);
+        int dr = System.Math.Sign(tr - fr);
+
+        // Knights jump — no path to check
+        if (dc != 0 && dr != 0 && System.Math.Abs(tc - fc) != System.Math.Abs(tr - fr))
+            return false;
+
+        int c = fc + dc, r = fr + dr;
+        while (c != tc || r != tr)
+        {
+            if (_board.TileHasEffect(r * 8 + c, TileEffectType.Occupied)) return true;
+            c += dc; r += dr;
+        }
+        return false;
+    }
+
     private IEnumerator DoAITurn(PieceColor aiColor)
     {
         // Wait for any ongoing move/reaction animations
@@ -74,7 +94,15 @@ public class AIGameMode : IGameMode
         {
             var p = _board.GetPiece(m.from);
             if (p != null && p.HasEffect(EffectType.Stun)) return true;
+
+            // Can't capture shielded pieces
+            var target = _board.GetPiece(m.to);
+            if (target != null && target.HasEffect(EffectType.Shield)) return true;
+
+            // Can't move to or through Occupied tiles
             if (_board.TileHasEffect(m.to, TileEffectType.Occupied)) return true;
+            if (PathCrossesOccupied(m.from, m.to)) return true;
+
             return false;
         });
 

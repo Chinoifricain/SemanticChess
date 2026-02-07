@@ -12,6 +12,9 @@ public class GameUI : MonoBehaviour
     [SerializeField] private Button _menuButton;
     [SerializeField] private Button _backToMenuButton;
 
+    private bool _isThinking;
+    private bool _isOnline;
+
     private void Awake()
     {
         _rematchButton.onClick.AddListener(() => GameManager.Instance.RequestRematch());
@@ -30,7 +33,10 @@ public class GameUI : MonoBehaviour
         _panel.SetActive(false);
     }
 
-    private bool _isThinking;
+    public void SetOnlineMode(bool online)
+    {
+        _isOnline = online;
+    }
 
     public void ShowThinking()
     {
@@ -49,21 +55,59 @@ public class GameUI : MonoBehaviour
         _turnIndicator.text = color == PieceColor.White ? "White's Turn" : "Black's Turn";
     }
 
+    public void UpdateOnlineTurn(bool isLocalTurn)
+    {
+        _turnIndicator.text = isLocalTurn ? "Your Turn" : "Opponent's Turn";
+    }
+
+    public void ShowOpponentDisconnected(bool disconnected)
+    {
+        if (disconnected)
+            _turnIndicator.text = "Opponent disconnected...";
+    }
+
+    public void ShowWaitingRematch()
+    {
+        _resultText.text = "Waiting for opponent...";
+    }
+
     public void ShowGameOver(MatchResult result)
     {
         _gameOverPanel.SetActive(true);
 
-        switch (result.Outcome)
+        if (_isOnline)
         {
-            case MatchOutcome.Checkmate:
-                _resultText.text = $"Checkmate!\n{result.Winner} wins!";
-                break;
-            case MatchOutcome.Stalemate:
-                _resultText.text = "Stalemate!\nDraw";
-                break;
-            case MatchOutcome.KingDestroyed:
-                _resultText.text = $"{result.Winner} wins!\nKing destroyed";
-                break;
+            // Online: show win/loss from local player perspective
+            var localColor = GameManager.Instance.RoomManager.LocalColor;
+            bool localWon = result.Winner == localColor;
+
+            switch (result.Outcome)
+            {
+                case MatchOutcome.Checkmate:
+                    _resultText.text = localWon ? "Checkmate!\nYou win!" : "Checkmate!\nYou lose...";
+                    break;
+                case MatchOutcome.Stalemate:
+                    _resultText.text = "Stalemate!\nDraw";
+                    break;
+                case MatchOutcome.KingDestroyed:
+                    _resultText.text = localWon ? "You win!\nKing destroyed" : "You lose...\nKing destroyed";
+                    break;
+            }
+        }
+        else
+        {
+            switch (result.Outcome)
+            {
+                case MatchOutcome.Checkmate:
+                    _resultText.text = $"Checkmate!\n{result.Winner} wins!";
+                    break;
+                case MatchOutcome.Stalemate:
+                    _resultText.text = "Stalemate!\nDraw";
+                    break;
+                case MatchOutcome.KingDestroyed:
+                    _resultText.text = $"{result.Winner} wins!\nKing destroyed";
+                    break;
+            }
         }
     }
 

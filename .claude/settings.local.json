@@ -9,7 +9,10 @@
       "Bash(for:*)",
       "Bash(do)",
       "Bash(done)",
-      "Bash(powershell -Command \"Get-Content ''Assets\\\\TextMesh Pro\\\\Sprites\\\\EmojiOne.json'' | Select-String ''\"\"filename\"\"'' | ForEach-Object { $_Line.Trim\\(\\) }\")"
+      "Bash(powershell -Command \"Get-Content ''Assets\\\\TextMesh Pro\\\\Sprites\\\\EmojiOne.json'' | Select-String ''\"\"filename\"\"'' | ForEach-Object { $_Line.Trim\\(\\) }\")",
+      "Bash(npx tsc:*)",
+      "Bash(npx wrangler deploy:*)",
+      "Bash(curl:*)"
     ]
   }
 }

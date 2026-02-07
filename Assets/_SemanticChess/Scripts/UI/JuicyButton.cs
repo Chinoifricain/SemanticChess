@@ -81,4 +81,21 @@ public class JuicyButton : MonoBehaviour, IPointerEnterHandler, IPointerExitHand
         Vector3 target = _hovered ? Vector3.one * _hoverScale : Vector3.one;
         _scaleTween = _rt.DOScale(target, 0.2f).SetEase(Ease.OutBack).SetUpdate(true);
     }
+
+    /// <summary>
+    /// Play a pop-in appear animation (scale 0 → overshoot → 1).
+    /// Call with a staggered delay when showing a panel.
+    /// </summary>
+    public void PlayAppear(float delay = 0f)
+    {
+        if(!_rt)
+            _rt = transform as RectTransform;
+
+        _scaleTween?.Kill();
+        _rt.localScale = Vector3.zero;
+        _scaleTween = _rt.DOScale(Vector3.one, 0.25f)
+            .SetDelay(delay)
+            .SetEase(Ease.OutBack)
+            .SetUpdate(true);
+    }
 }

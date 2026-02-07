@@ -69,6 +69,8 @@ public class ChessBoard : MonoBehaviour
     private Vector3 _boardRestPos;
     private readonly HashSet<Transform> _staticChildren = new HashSet<Transform>();
 
+    private bool _flipped;
+
     private PieceColor _currentTurn = PieceColor.White;
     private int _selectedIndex = -1;
     private readonly List<int> _validMoves = new List<int>();
@@ -91,6 +93,32 @@ public class ChessBoard : MonoBehaviour
     public event Action<PieceColor> OnTurnChanged;
     public event Action<MatchResult> OnGameOver;
     public event Action<int, int> OnMoveMade;
+    public event Action<int, int, ElementMixResult, ElementReactionResult> OnCaptureResult;
+    public event Action<int> OnHoverChanged;
+    public event Action<int> OnPieceSelected;
+    public event Action OnPieceDeselected;
+
+    // --- Online: pre-computed reaction from opponent ---
+    private ElementMixResult _pendingMix;
+    private ElementReactionResult _pendingReaction;
+
+    /// <summary>
+    /// When true, HandleCapture will wait for SetPendingReaction() instead of calling the API.
+    /// Set by OnlineGameMode when receiving an opponent move that is a capture.
+    /// </summary>
+    public bool WaitForPendingData { get; set; }
+
+    public void SetPendingReaction(ElementMixResult mix, ElementReactionResult reaction)
+    {
+        _pendingMix = mix;
+        _pendingReaction = reaction;
+    }
+
+    public void SetFlipped(bool flipped)
+    {
+        _flipped = flipped;
+        ComputeTilePositions();
+    }
 
     /// <summary>
     /// Whether the board has been initialized (Start has run).
@@ -130,9 +158,11 @@ public class ChessBoard : MonoBehaviour
         {
             int col = i % 8;
             int row = i / 8;
+            int visualCol = _flipped ? (7 - col) : col;
+            int visualRow = _flipped ? (7 - row) : row;
             Vector3 worldPos = new Vector3(
-                topLeft.x + (col + 0.5f) * _tileSize,
-                topLeft.y - (row + 0.5f) * _tileSize,
+                topLeft.x + (visualCol + 0.5f) * _tileSize,
+                topLeft.y - (visualRow + 0.5f) * _tileSize,
                 0f);
             _tilePositions[i] = transform.InverseTransformPoint(worldPos);
         }
@@ -153,7 +183,10 @@ public class ChessBoard : MonoBehaviour
         int col = Mathf.FloorToInt(localX / _tileSize);
         int row = Mathf.FloorToInt(localY / _tileSize);
         if (col >= 0 && col < 8 && row >= 0 && row < 8)
+        {
+            if (_flipped) { col = 7 - col; row = 7 - row; }
             return row * 8 + col;
+        }
         return -1;
     }
 
@@ -210,6 +243,8 @@ public class ChessBoard : MonoBehaviour
 
         if (_hoveredIndex >= 0 && _board[_hoveredIndex] != null)
             _board[_hoveredIndex].ShowHover(true);
+
+        OnHoverChanged?.Invoke(index);
     }
 
     // --- AI Helpers ---
@@ -279,7 +314,7 @@ public class ChessBoard : MonoBehaviour
         if (elements.Count > 0)
             sb.AppendLine($"Elements: {string.Join(", ", elements)}");
 
-        // Active effects (pieces + tiles)
+        // Active effects (pieces + tiles) — exclude environmental effects the AI can't act on
         var effects = new List<string>();
         for (int i = 0; i < 64; i++)
         {
@@ -287,7 +322,8 @@ public class ChessBoard : MonoBehaviour
             if (p != null)
             {
                 foreach (var e in p.Effects)
-                    effects.Add($"{IndexToAlgebraic(i)}:{e.Type}({e.Duration})");
+                    if (e.Type != EffectType.Burning && e.Type != EffectType.Plant)
+                        effects.Add($"{IndexToAlgebraic(i)}:{e.Type}({e.Duration})");
             }
             foreach (var te in _tileEffects[i])
                 effects.Add($"{IndexToAlgebraic(i)}-tile:{te.Type}({te.Duration})");
@@ -352,6 +388,9 @@ public class ChessBoard : MonoBehaviour
         _gameOver = false;
         _hoveredIndex = -1;
         _selectedIndex = -1;
+        _pendingMix = null;
+        _pendingReaction = null;
+        WaitForPendingData = false;
         _validMoves.Clear();
         _indicators.Clear();
         _tileEffectVisuals.Clear();
@@ -437,8 +476,8 @@ public class ChessBoard : MonoBehaviour
         piece.Select();
         _validMoves.Clear();
         _validMoves.AddRange(GetLegalMoves(index));
-        _validMoves.RemoveAll(i => TileHasEffect(i, TileEffectType.Occupied));
         ShowIndicators();
+        OnPieceSelected?.Invoke(index);
     }
 
     private void ExecuteMove(int from, int to)
@@ -496,27 +535,71 @@ public class ChessBoard : MonoBehaviour
 
         ElementMixResult mixResult = null;
         ElementReactionResult reactionResult = null;
-        bool mixWasCached = _elementService.HasCachedMix(atkElem, defElem);
+        bool usedPending = false;
 
-        if (mixWasCached)
+        // Online mode: use pre-computed results from opponent
+        if (_pendingMix != null)
         {
-            // Path B: cached mix — get it instantly, fire reaction call in background
-            yield return _elementService.GetElementMix(atkElem, defElem, r => mixResult = r);
-
-            StartCoroutine(_elementService.GetElementReaction(
-                mixResult, reactionCtx,
-                r => reactionResult = r));
+            mixResult = _pendingMix;
+            reactionResult = _pendingReaction;
+            _pendingMix = null;
+            _pendingReaction = null;
+            WaitForPendingData = false;
+            usedPending = true;
+        }
+        else if (WaitForPendingData)
+        {
+            // Online: opponent's move arrived first, capture data coming separately
+            // Wait for SetPendingReaction() to be called with the data
+            WaitForPendingData = false;
+            float timeout = 30f, waited = 0f;
+            while (_pendingMix == null && waited < timeout)
+            {
+                yield return null;
+                waited += Time.deltaTime;
+            }
+            if (_pendingMix != null)
+            {
+                mixResult = _pendingMix;
+                reactionResult = _pendingReaction;
+                _pendingMix = null;
+                _pendingReaction = null;
+                usedPending = true;
+            }
         }
         else
         {
-            // Path A: combined mix + reaction in one API call
-            yield return _elementService.GetElementMixAndReaction(
-                atkElem, defElem, reactionCtx,
-                (mix, reaction) => { mixResult = mix; reactionResult = reaction; });
+            bool mixWasCached = _elementService.HasCachedMix(atkElem, defElem);
+
+            if (mixWasCached)
+            {
+                // Path B: cached mix — get it instantly, fire reaction call in background
+                yield return _elementService.GetElementMix(atkElem, defElem, r => mixResult = r);
+
+                StartCoroutine(_elementService.GetElementReaction(
+                    mixResult, reactionCtx,
+                    r => reactionResult = r));
+            }
+            else
+            {
+                // Path A: combined mix + reaction in one API call
+                yield return _elementService.GetElementMixAndReaction(
+                    atkElem, defElem, reactionCtx,
+                    (mix, reaction) => { mixResult = mix; reactionResult = reaction; });
+            }
         }
 
-        attacker.StopFightParticle();
-        DismissFightTitle(fightTitle);
+        // Wait for reaction if the background call is still in progress (Path B)
+        // This keeps the fight animation playing while the reaction loads
+        if (reactionResult == null && !usedPending)
+        {
+            float timeout = 10f, waited = 0f;
+            while (reactionResult == null && waited < timeout)
+            {
+                yield return null;
+                waited += Time.deltaTime;
+            }
+        }
 
         if (mixResult == null)
         {
@@ -532,6 +615,17 @@ public class ChessBoard : MonoBehaviour
         // Determine outcome
         bool isDraw = mixResult.winningElement == "draw" || string.IsNullOrEmpty(mixResult.winningElement);
         bool attackerWins = !isDraw && string.Equals(mixResult.winningElement, atkElem, System.StringComparison.OrdinalIgnoreCase);
+
+        // Fallback if no reaction was produced
+        if (reactionResult == null)
+            reactionResult = GenerateFallbackReaction(to, attacker, attackerWins, isDraw);
+
+        // Notify listeners BEFORE animations so the opponent gets data immediately
+        // and can play trade text / reactions in sync
+        OnCaptureResult?.Invoke(from, to, mixResult, reactionResult);
+
+        attacker.StopFightParticle();
+        DismissFightTitle(fightTitle);
 
         // Trade result text animation
         float tradeDuration = PlayTradeResultText(to, attackerWins, isDraw);
@@ -549,21 +643,6 @@ public class ChessBoard : MonoBehaviour
         attacker.RevealNewElement();
 
         yield return new WaitForSeconds(1.8f);
-
-        // Wait for reaction if the background call is still in progress
-        if (reactionResult == null && mixWasCached)
-        {
-            float timeout = 10f, waited = 0f;
-            while (reactionResult == null && waited < timeout)
-            {
-                yield return null;
-                waited += Time.deltaTime;
-            }
-        }
-
-        // Fallback if no reaction was produced
-        if (reactionResult == null)
-            reactionResult = GenerateFallbackReaction(to, attacker, attackerWins, isDraw);
 
         // Apply elemental reaction effects
         string tradeOutcome = isDraw ? "draw" : (attackerWins ? "won" : "lost");
@@ -844,7 +923,9 @@ public class ChessBoard : MonoBehaviour
             int nc = col + dc, nr = row + dr;
             while (nc >= 0 && nc < 8 && nr >= 0 && nr < 8)
             {
-                ChessPiece p = _board[nr * 8 + nc];
+                int idx = nr * 8 + nc;
+                if (TileHasEffect(idx, TileEffectType.Occupied)) break;
+                ChessPiece p = _board[idx];
                 if (p != null)
                 {
                     if (p.Color == byColor && !p.HasEffect(EffectType.Stun) && (p.PieceType == PieceType.Bishop || p.PieceType == PieceType.Queen))
@@ -861,7 +942,9 @@ public class ChessBoard : MonoBehaviour
             int nc = col + dc, nr = row + dr;
             while (nc >= 0 && nc < 8 && nr >= 0 && nr < 8)
             {
-                ChessPiece p = _board[nr * 8 + nc];
+                int idx = nr * 8 + nc;
+                if (TileHasEffect(idx, TileEffectType.Occupied)) break;
+                ChessPiece p = _board[idx];
                 if (p != null)
                 {
                     if (p.Color == byColor && !p.HasEffect(EffectType.Stun) && (p.PieceType == PieceType.Rook || p.PieceType == PieceType.Queen))
@@ -921,8 +1004,68 @@ public class ChessBoard : MonoBehaviour
 
         var moves = piece.GetPossibleMoves(fromIndex, _board);
         moves.RemoveAll(to => !IsMoveLegal(fromIndex, to));
-        moves.RemoveAll(idx => TileHasEffect(idx, TileEffectType.Occupied));
+        FilterOccupiedBlocked(fromIndex, piece, moves);
         return moves;
+    }
+
+    private void FilterOccupiedBlocked(int fromIndex, ChessPiece piece, List<int> moves)
+    {
+        // Non-sliding pieces: just remove Occupied destinations
+        if (piece.PieceType == PieceType.Knight || piece.PieceType == PieceType.King)
+        {
+            moves.RemoveAll(idx => TileHasEffect(idx, TileEffectType.Occupied));
+            return;
+        }
+
+        // Pawns: if forward square is Occupied, also block double step
+        if (piece.PieceType == PieceType.Pawn)
+        {
+            int col = fromIndex % 8;
+            int row = fromIndex / 8;
+            int dir = (piece.Color == PieceColor.White) ? -1 : 1;
+            int fwdRow = row + dir;
+            if (fwdRow >= 0 && fwdRow < 8 && TileHasEffect(fwdRow * 8 + col, TileEffectType.Occupied))
+            {
+                int fwd2Row = row + 2 * dir;
+                if (fwd2Row >= 0 && fwd2Row < 8)
+                    moves.Remove(fwd2Row * 8 + col);
+            }
+            moves.RemoveAll(idx => TileHasEffect(idx, TileEffectType.Occupied));
+            return;
+        }
+
+        // Sliding pieces (Bishop, Rook, Queen): block tiles at and beyond Occupied
+        int fromCol = fromIndex % 8;
+        int fromRow = fromIndex / 8;
+        var dirs = piece.PieceType == PieceType.Bishop ? _bishopDirs
+                 : piece.PieceType == PieceType.Rook   ? _rookDirs
+                 : _allDirs;
+
+        var blocked = new HashSet<int>();
+        foreach (var (dc, dr) in dirs)
+        {
+            bool pastOccupied = false;
+            int nc = fromCol + dc, nr = fromRow + dr;
+            while (nc >= 0 && nc < 8 && nr >= 0 && nr < 8)
+            {
+                int idx = nr * 8 + nc;
+                if (pastOccupied)
+                {
+                    blocked.Add(idx);
+                }
+                else if (TileHasEffect(idx, TileEffectType.Occupied))
+                {
+                    blocked.Add(idx);
+                    pastOccupied = true;
+                }
+                else if (_board[idx] != null)
+                {
+                    break;
+                }
+                nc += dc; nr += dr;
+            }
+        }
+        moves.RemoveAll(idx => blocked.Contains(idx));
     }
 
     private bool HasAnyLegalMoves(PieceColor color)
@@ -1309,6 +1452,7 @@ public class ChessBoard : MonoBehaviour
         ClearIndicators();
         _selectedIndex = -1;
         _validMoves.Clear();
+        OnPieceDeselected?.Invoke();
     }
 
     // --- Tile Effect Visuals ---
