@@ -1,4 +1,4 @@
-public enum EffectType { Damage, Stun, Push, Shield, Convert, Poison, Transform, Burning, Plant }
+public enum EffectType { Damage, Stun, Push, Shield, Convert, Poison, Transform, Burning, Plant, Cleanse }
 
 [System.Serializable]
 public class ChessEffect
@@ -13,6 +13,9 @@ public class ChessEffect
 
     // Transform params
     public PieceType TransformTarget;
+
+    // Cleanse params
+    public bool CleansePositive; // true = strip shields (debuff), false = strip negatives (buff)
 
     public ChessEffect(EffectType type, int duration = -1)
     {

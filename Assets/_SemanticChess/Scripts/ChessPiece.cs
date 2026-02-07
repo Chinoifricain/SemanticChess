@@ -541,6 +541,7 @@ public class ChessPiece : MonoBehaviour
             case EffectType.Convert:   return new Color(0.9f, 0.5f, 0.9f);
             case EffectType.Burning:   return new Color(1f, 0.45f, 0.1f);
             case EffectType.Plant:     return new Color(0.2f, 0.85f, 0.3f);
+            case EffectType.Cleanse:   return new Color(0.95f, 0.95f, 0.6f);
             default:                   return UnityEngine.Color.white;
         }
     }

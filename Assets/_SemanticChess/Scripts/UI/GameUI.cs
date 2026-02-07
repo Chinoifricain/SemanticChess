@@ -30,8 +30,22 @@ public class GameUI : MonoBehaviour
         _panel.SetActive(false);
     }
 
+    private bool _isThinking;
+
+    public void ShowThinking()
+    {
+        _isThinking = true;
+        _turnIndicator.text = "AI is thinking...";
+    }
+
+    public void HideThinking()
+    {
+        _isThinking = false;
+    }
+
     public void UpdateTurn(PieceColor color)
     {
+        if (_isThinking) return;
         _turnIndicator.text = color == PieceColor.White ? "White's Turn" : "Black's Turn";
     }
 

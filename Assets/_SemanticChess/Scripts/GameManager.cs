@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 public class GameManager : MonoBehaviour
@@ -11,6 +12,11 @@ public class GameManager : MonoBehaviour
     private IGameMode _currentMode;
 
     public ChessBoard Board => _board;
+    public GameUI GameUI => _gameUI;
+
+    public int AIDifficulty { get; set; }
+
+    public Coroutine RunCoroutine(IEnumerator routine) => StartCoroutine(routine);
 
     private void Awake()
     {

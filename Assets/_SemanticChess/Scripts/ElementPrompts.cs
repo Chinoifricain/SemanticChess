@@ -43,6 +43,7 @@ Piece effects:
 - Transform(piece_type, duration) — piece BECOMES a different type temporarily (e.g. Queen becomes Pawn, or Pawn becomes Queen). Reverts when duration expires.
 - Convert(duration) — piece SWITCHES COLOR. It fights for the other side until duration expires.
 - Damage — INSTANT KILL. Blocked by Shield. Extremely powerful — the nuclear option.
+- Cleanse — REMOVES status effects. Use target=""buff"" to PURIFY allies (clears Stun, Poison, Burning, Plant, Convert). Use target=""debuff"" to DISPEL enemies (strips Shield). Instant, no duration.
 
 Tile effects:
 - Burning(duration, min 5) — any piece standing on it for 3 turns DIES. Persistent area denial.
@@ -120,7 +121,7 @@ Patterns: ""+"" (cardinal), ""x"" (diagonals), ""*"" (all 8 dirs), ""forward"" (
 ""obstructed"": true = rays stop at first piece, false = pass through. Default true.
 
 Each effect uses target=""buff"" (beneficial) or ""debuff"" (harmful) — you decide which. The system resolves who is affected automatically.
-Piece: Shield(duration) (immune to capture), Stun(duration) (can't move), Push(direction, push_distance) (shoved), Poison(duration) (dies at 0, follows piece, blocked by Shield), Transform(piece_type, duration) (becomes different type temporarily), Convert(duration) (switches color), Damage (instant kill, blocked by Shield — the nuclear option)
+Piece: Shield(duration) (immune to capture), Stun(duration) (can't move), Push(direction, push_distance) (shoved), Poison(duration) (dies at 0, follows piece, blocked by Shield), Transform(piece_type, duration) (becomes different type temporarily), Convert(duration) (switches color), Damage (instant kill, blocked by Shield — the nuclear option), Cleanse (buff = purify allies: clears Stun/Poison/Burning/Plant/Convert; debuff = dispel enemies: strips Shield. Instant, no duration)
 Tile: Burning(duration, min 5) (3 turns standing = death), Plant(duration) (stuns after 1 turn), Ice(duration) (pieces slide through), Occupied(duration) (blocks movement into cell — use target=""buff"" to protect friendlies, or target=""empty"" for area denial walls. Never debuff)
 Push directions: ""outwards"", ""inwards"", ""clockwise"", ""counter_clockwise"", ""up"", ""down"", ""left"", ""right""
 Transform piece_type: ""Pawn"", ""Knight"", ""Bishop"", ""Rook"", ""Queen""
@@ -145,6 +146,63 @@ Flavor: punchy 3-6 words with ""!"" — e.g. ""Storm hurls foes aside!"", ""Vine
 Return ONLY valid JSON, no markdown:
 {{""mix"":{{""newElement"":""name"",""emoji"":""emoji"",""winningElement"":""{attacker}"" or ""{defender}"" or ""draw"",""reasoning"":""brief""}},""reaction"":{{""effects"":[{{""pattern"":""+"",""distance"":2,""obstructed"":true,""target"":""debuff"",""effect"":""Stun"",""duration"":2}}],""flavor"":""Element does something!""}}}}";
     }
+
+    public static string BuildChessMovePrompt(string boardState, string candidateMoves)
+    {
+        return
+$@"You are playing Black in Semantic Chess — chess with elemental reactions.
+When a piece captures another, their elements mix and create effects on the board (damage, shields, burning tiles, etc.).
+
+{boardState}
+{candidateMoves}
+
+Pick the move that best combines chess strength with elemental strategy.
+Prefer captures that trigger interesting element reactions, but don't sacrifice too much material.
+
+Return ONLY valid JSON, no markdown:
+{{""move"":""e7e5""}}
+(from-square + to-square, 4 lowercase characters)";
+    }
+
+    public static string FormatCandidateMoves(
+        System.Collections.Generic.List<(int from, int to, int score)> candidates,
+        System.Func<int, ChessPiece> getPiece)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Candidate moves (ranked by chess engine, best first):");
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            var (from, to, score) = candidates[i];
+            ChessPiece piece = getPiece(from);
+            char letter = PieceLetter(piece.PieceType);
+            string fromSq = ChessBoard.IndexToAlgebraic(from);
+            string toSq = ChessBoard.IndexToAlgebraic(to);
+            string eval = $"{(score >= 0 ? "+" : "")}{score / 100f:F1}";
+
+            ChessPiece target = getPiece(to);
+            string capture = "";
+            if (target != null)
+            {
+                capture = $" captures {target.PieceType}";
+                if (!string.IsNullOrEmpty(target.Element))
+                    capture += $" ({target.Element}{target.Emoji})";
+            }
+
+            sb.AppendLine($"{i + 1}. {letter}{fromSq}-{toSq} [{eval}]{capture}");
+        }
+        return sb.ToString();
+    }
+
+    private static char PieceLetter(PieceType type) => type switch
+    {
+        PieceType.Pawn   => 'P',
+        PieceType.Knight => 'N',
+        PieceType.Bishop => 'B',
+        PieceType.Rook   => 'R',
+        PieceType.Queen  => 'Q',
+        PieceType.King   => 'K',
+        _ => '?'
+    };
 
     public static string GetTendencyHint(string pieceType)
     {

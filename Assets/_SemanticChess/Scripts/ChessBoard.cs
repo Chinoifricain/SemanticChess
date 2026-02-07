@@ -85,6 +85,7 @@ public class ChessBoard : MonoBehaviour
     public bool IsPlayingReaction => _isPlayingReaction;
     public int SelectedIndex => _selectedIndex;
     public SpriteRenderer BoardSprite => _boardSprite;
+    public ElementService ElementService => _elementService;
 
     // --- Events ---
     public event Action<PieceColor> OnTurnChanged;
@@ -209,6 +210,93 @@ public class ChessBoard : MonoBehaviour
 
         if (_hoveredIndex >= 0 && _board[_hoveredIndex] != null)
             _board[_hoveredIndex].ShowHover(true);
+    }
+
+    // --- AI Helpers ---
+
+    public List<(int from, int to)> GetAllLegalMoves(PieceColor color)
+    {
+        var result = new List<(int, int)>();
+        for (int i = 0; i < 64; i++)
+        {
+            ChessPiece p = _board[i];
+            if (p == null || p.Color != color) continue;
+            if (p.HasEffect(EffectType.Stun)) continue;
+            foreach (int to in GetLegalMoves(i))
+                result.Add((i, to));
+        }
+        return result;
+    }
+
+    public string SerializeBoardForAI()
+    {
+        var sb = new StringBuilder();
+
+        // Board grid
+        for (int row = 0; row < 8; row++)
+        {
+            sb.Append($"{8 - row}: ");
+            for (int col = 0; col < 8; col++)
+            {
+                if (col > 0) sb.Append(' ');
+                ChessPiece p = _board[row * 8 + col];
+                if (p == null) { sb.Append('.'); continue; }
+                char c = p.PieceType switch
+                {
+                    PieceType.Pawn   => 'P',
+                    PieceType.Knight => 'N',
+                    PieceType.Bishop => 'B',
+                    PieceType.Rook   => 'R',
+                    PieceType.Queen  => 'Q',
+                    PieceType.King   => 'K',
+                    _ => '?'
+                };
+                sb.Append(p.Color == PieceColor.Black ? char.ToLower(c) : c);
+            }
+            sb.AppendLine();
+        }
+        sb.AppendLine("   a b c d e f g h");
+
+        // Elements
+        var elements = new List<string>();
+        for (int i = 0; i < 64; i++)
+        {
+            ChessPiece p = _board[i];
+            if (p == null || string.IsNullOrEmpty(p.Element)) continue;
+            string colorLetter = p.Color == PieceColor.White ? "W" : "B";
+            char pieceLetter = p.PieceType switch
+            {
+                PieceType.Pawn   => 'P',
+                PieceType.Knight => 'N',
+                PieceType.Bishop => 'B',
+                PieceType.Rook   => 'R',
+                PieceType.Queen  => 'Q',
+                PieceType.King   => 'K',
+                _ => '?'
+            };
+            elements.Add($"{IndexToAlgebraic(i)}={p.Element}{p.Emoji}({colorLetter}{pieceLetter})");
+        }
+        if (elements.Count > 0)
+            sb.AppendLine($"Elements: {string.Join(", ", elements)}");
+
+        // Active effects (pieces + tiles)
+        var effects = new List<string>();
+        for (int i = 0; i < 64; i++)
+        {
+            ChessPiece p = _board[i];
+            if (p != null)
+            {
+                foreach (var e in p.Effects)
+                    effects.Add($"{IndexToAlgebraic(i)}:{e.Type}({e.Duration})");
+            }
+            foreach (var te in _tileEffects[i])
+                effects.Add($"{IndexToAlgebraic(i)}-tile:{te.Type}({te.Duration})");
+        }
+        if (effects.Count > 0)
+            sb.AppendLine($"Effects: {string.Join(", ", effects)}");
+
+        sb.AppendLine($"Turn: {_currentTurn}");
+        return sb.ToString();
     }
 
     // --- Board Lifecycle ---
@@ -829,6 +917,7 @@ public class ChessBoard : MonoBehaviour
     {
         ChessPiece piece = _board[fromIndex];
         if (piece == null) return new List<int>();
+        if (piece.HasEffect(EffectType.Stun)) return new List<int>();
 
         var moves = piece.GetPossibleMoves(fromIndex, _board);
         moves.RemoveAll(to => !IsMoveLegal(fromIndex, to));
@@ -897,6 +986,23 @@ public class ChessBoard : MonoBehaviour
                 piece.AddEffect(effect);
                 if (effect.Type == EffectType.Stun && index == _selectedIndex)
                     Deselect();
+                return;
+
+            case EffectType.Cleanse:
+                if (effect.CleansePositive)
+                {
+                    SpawnFloatingText(index, "Dispel!");
+                    piece.RemoveEffect(EffectType.Shield);
+                }
+                else
+                {
+                    SpawnFloatingText(index, "Cleanse!");
+                    piece.RemoveEffect(EffectType.Stun);
+                    piece.RemoveEffect(EffectType.Burning);
+                    piece.RemoveEffect(EffectType.Poison);
+                    piece.RemoveEffect(EffectType.Plant);
+                    piece.RemoveEffect(EffectType.Convert);
+                }
                 return;
         }
     }
@@ -1096,7 +1202,10 @@ public class ChessBoard : MonoBehaviour
                         piece.UpdateEffectCounter(EffectType.Plant, 2 - _plantTurnCount[i]);
 
                     if (_plantTurnCount[i] >= 2 && !piece.HasEffect(EffectType.Stun))
+                    {
+                        SpawnFloatingText(i, "Stun!");
                         piece.AddEffect(new ChessEffect(EffectType.Stun, 1));
+                    }
                 }
                 else if (piece == null)
                 {
@@ -1634,6 +1743,7 @@ public class ChessBoard : MonoBehaviour
         public int Duration;
         public int PushDirCol, PushDirRow, PushDistance;
         public PieceType TransformTarget;
+        public bool CleansePositive;
     }
 
     private struct EffectEntryGroup
@@ -1719,6 +1829,7 @@ public class ChessBoard : MonoBehaviour
                         case "Convert":   effectType = EffectType.Convert; break;
                         case "Poison":    effectType = EffectType.Poison; break;
                         case "Transform": effectType = EffectType.Transform; break;
+                        case "Cleanse":   effectType = EffectType.Cleanse; break;
                         default: continue;
                     }
 
@@ -1736,7 +1847,7 @@ public class ChessBoard : MonoBehaviour
                         Duration = entry.duration
                     };
 
-                    if (fx.Duration <= 0 && effectType != EffectType.Damage)
+                    if (fx.Duration <= 0 && effectType != EffectType.Damage && effectType != EffectType.Cleanse)
                         fx.Duration = effectType == EffectType.Poison ? 3 : 1;
 
                     if (effectType == EffectType.Push)
@@ -1764,6 +1875,9 @@ public class ChessBoard : MonoBehaviour
                         }
                         fx.TransformTarget = tt;
                     }
+
+                    if (effectType == EffectType.Cleanse)
+                        fx.CleansePositive = (targetFilter == "debuff");
 
                     entryEffects.Add(fx);
                     totalEffects++;
@@ -1870,6 +1984,7 @@ public class ChessBoard : MonoBehaviour
             case "Push":      return new Color(0.9f, 0.8f, 0.3f);     // gold
             case "Convert":   return new Color(0.9f, 0.5f, 0.9f);     // pink
             case "Transform": return new Color(0.3f, 0.6f, 1f);       // blue
+            case "Cleanse":   return new Color(0.95f, 0.95f, 0.6f);  // soft yellow
             default:          return Color.white;
         }
     }
@@ -2041,6 +2156,8 @@ public class ChessBoard : MonoBehaviour
             }
             if (fx.PieceEffectType == EffectType.Transform)
                 effect.TransformTarget = fx.TransformTarget;
+            if (fx.PieceEffectType == EffectType.Cleanse)
+                effect.CleansePositive = fx.CleansePositive;
             ApplyEffect(fx.TargetIndex, effect);
         }
     }

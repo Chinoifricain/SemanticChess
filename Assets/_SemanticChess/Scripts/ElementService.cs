@@ -112,6 +112,23 @@ public class ElementService : MonoBehaviour
         else { Debug.LogError($"[ElementService] Failed to parse reaction: {response}"); callback?.Invoke(null); }
     }
 
+    public IEnumerator GetAIMove(string prompt, Action<string> callback)
+    {
+        string response = null;
+        yield return SendRequest(prompt, r => response = r);
+
+        if (response == null) { callback?.Invoke(null); yield break; }
+
+        string text = ExtractTextField(response);
+        if (text == null) { callback?.Invoke(null); yield break; }
+
+        string json = ExtractJson(text);
+        if (json == null) { callback?.Invoke(null); yield break; }
+
+        string move = ExtractStringField(json, "move");
+        callback?.Invoke(move);
+    }
+
     public void ClearCache() => _cache.Clear();
 
     // ─── HTTP Request ───────────────────────────────────────────────────
