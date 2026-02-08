@@ -170,6 +170,12 @@ public class TutorialGameMode : IGameMode
         if (selected == _guidedFrom && index == _guidedTo)
         {
             _board.DeselectPiece();
+
+            // Inject forced reaction data so HandleCapture skips the API
+            var scenario = _scenarios[_scenarioIndex];
+            if (scenario.ForcedMix != null)
+                _board.SetPendingReaction(scenario.ForcedMix, scenario.ForcedReaction);
+
             _board.SubmitMove(new MoveRequest
             {
                 FromIndex = _guidedFrom,

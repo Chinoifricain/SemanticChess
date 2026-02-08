@@ -91,13 +91,13 @@ public class MenuUI : MonoBehaviour
         // Audio toggles
         if (_musicToggle != null)
         {
-            _musicToggle.isOn = AudioManager.Instance.MusicMuted;
-            _musicToggle.onValueChanged.AddListener(on => AudioManager.Instance.SetMusicMuted(!on));
+            _musicToggle.SetIsOnWithoutNotify(AudioManager.Instance.MusicMuted);
+            _musicToggle.onValueChanged.AddListener(on => AudioManager.Instance.SetMusicMuted(on));
         }
         if (_sfxToggle != null)
         {
-            _sfxToggle.isOn = AudioManager.Instance.SfxMuted;
-            _sfxToggle.onValueChanged.AddListener(on => AudioManager.Instance.SetSfxMuted(!on));
+            _sfxToggle.SetIsOnWithoutNotify(AudioManager.Instance.SfxMuted);
+            _sfxToggle.onValueChanged.AddListener(on => AudioManager.Instance.SetSfxMuted(on));
         }
 
         // Set up AI difficulty sub-buttons (hidden behind parent)

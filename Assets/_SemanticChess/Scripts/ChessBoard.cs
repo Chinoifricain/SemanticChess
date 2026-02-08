@@ -734,7 +734,7 @@ public class ChessBoard : MonoBehaviour
         ElementReactionResult reactionResult = null;
         bool usedPending = false;
 
-        // Online mode: use pre-computed results from opponent
+        // Pre-computed results (tutorial / online opponent)
         if (_pendingMix != null)
         {
             mixResult = _pendingMix;
@@ -743,6 +743,9 @@ public class ChessBoard : MonoBehaviour
             _pendingReaction = null;
             WaitForPendingData = false;
             usedPending = true;
+
+            // Let the fight animation play briefly when there's no API wait
+            yield return new WaitForSeconds(1.5f);
         }
         else if (WaitForPendingData)
         {

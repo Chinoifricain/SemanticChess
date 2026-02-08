@@ -28,6 +28,12 @@ public class TutorialScenario
     public string PostTitle;
     public string PostBody;
 
+    /// <summary>
+    /// When set, HandleCapture uses this instead of calling the API.
+    /// </summary>
+    public ElementMixResult ForcedMix;
+    public ElementReactionResult ForcedReaction;
+
     // Board indices (row*8+col, row 0=rank 8, row 7=rank 1):
     // e1=60, e8=4, e7=12, d4=35, e5=28, c3=42, f3=45, c4=34, d5=27, b4=33, e4=36
 
@@ -53,7 +59,22 @@ public class TutorialScenario
                 IntroTitle = "Elements Clash!",
                 IntroBody = "Every piece carries an element. When you capture, the elements fight!\n\nCapture the Plant pawn with your Fire queen.",
                 PostTitle = "You Won!",
-                PostBody = "Fire beats Plant \u2014 you won the clash!\n\nWhen you win, the reaction's effects strengthen your side. Always look for favorable element matchups."
+                PostBody = "Fire beats Plant \u2014 you won the clash!\n\nWhen you win, the reaction's effects strengthen your side. Always look for favorable element matchups.",
+                ForcedMix = new ElementMixResult
+                {
+                    newElement = "Ash",
+                    emoji = "\U0001faa8",
+                    winningElement = "Fire",
+                    reasoning = "Fire scorches Plant to Ash"
+                },
+                ForcedReaction = new ElementReactionResult
+                {
+                    flavor = "Fire spreads across the ground.",
+                    effects = new[]
+                    {
+                        new ReactionEffectEntry { pattern = "area", distance = 1, target = "empty", effect = "Burning", duration = 3 }
+                    }
+                }
             },
 
             // Step 2: Losing the Clash — Fire vs Water → Steam (Water wins)
@@ -73,17 +94,32 @@ public class TutorialScenario
                 IntroTitle = "A Risky Fight",
                 IntroBody = "Not every clash goes your way. Your Fire queen faces a Water pawn this time.\n\nMake the capture and see what happens...",
                 PostTitle = "You Lost!",
-                PostBody = "Water beats Fire \u2014 you lost the clash!\n\nWhen you lose, the reaction's effects hurt YOUR pieces instead. Think twice before attacking into a bad matchup."
+                PostBody = "Water beats Fire \u2014 you lost the clash!\n\nWhen you lose, the reaction's effects hurt YOUR pieces instead. Think twice before attacking into a bad matchup.",
+                ForcedMix = new ElementMixResult
+                {
+                    newElement = "Steam",
+                    emoji = "\u2668\ufe0f",
+                    winningElement = "Water",
+                    reasoning = "Water extinguishes Fire into Steam"
+                },
+                ForcedReaction = new ElementReactionResult
+                {
+                    flavor = "A burst of steam blows everything back.",
+                    effects = new[]
+                    {
+                        new ReactionEffectEntry { pattern = "area", distance = 2, target = "debuff", effect = "Push", direction = "outwards", push_distance = 1 }
+                    }
+                }
             },
 
             // Step 3: Sacrifice — Air knight takes Water pawn defended by rook → Ice (Air wins)
-            // c3=42, d5=27, d8=3 (rook defends d5 along d-file), e7=12 (near capture at d5)
+            // c3=42, d5=27, d8=3 (rook defends d5 along d-file), a8=0 (king far from action)
             new TutorialScenario
             {
                 Pieces = new[]
                 {
                     new TutorialPiece(60, PieceType.King, PieceColor.White, "Fire", "\U0001f525"),
-                    new TutorialPiece(12, PieceType.King, PieceColor.Black, "Fire", "\U0001f525"),
+                    new TutorialPiece(0, PieceType.King, PieceColor.Black, "Fire", "\U0001f525"),
                     new TutorialPiece(42, PieceType.Knight, PieceColor.White, "Air", "\U0001f4a8"),
                     new TutorialPiece(27, PieceType.Pawn, PieceColor.Black, "Water", "\U0001f4a7"),
                     new TutorialPiece(3, PieceType.Rook, PieceColor.Black, "Plant", "\U0001f33f"),
@@ -95,7 +131,24 @@ public class TutorialScenario
                 IntroTitle = "Worth the Risk",
                 IntroBody = "Your knight eyes a pawn defended by a rook. Normally, sacrificing a knight for a pawn is terrible!\n\nBut your Air dominates their Water. Take the plunge!",
                 PostTitle = "Calculated!",
-                PostBody = "Air freezes Water into Ice \u2014 you won the clash!\n\nWinning can shield your pieces, buff your allies, or cripple the enemy. A 'bad' chess trade becomes a power play with the right elements."
+                PostBody = "Air freezes Water into Ice \u2014 you won the clash!\n\nWinning can shield your pieces, buff your allies, or cripple the enemy. A 'bad' chess trade becomes a power play with the right elements.",
+                ForcedMix = new ElementMixResult
+                {
+                    newElement = "Ice",
+                    emoji = "\U0001f9ca",
+                    winningElement = "Air",
+                    reasoning = "Air freezes Water into Ice"
+                },
+                ForcedReaction = new ElementReactionResult
+                {
+                    flavor = "A freezing blast radiates from the clash.",
+                    effects = new[]
+                    {
+                        new ReactionEffectEntry { pattern = "area", distance = 0, target = "buff", effect = "Shield", duration = 2 },
+                        new ReactionEffectEntry { pattern = "+", distance = 2, target = "empty", effect = "Ice", duration = 3 },
+                        new ReactionEffectEntry { pattern = "+", distance = 3, target = "debuff", effect = "Stun", duration = 2 }
+                    }
+                }
             },
 
             // Step 4: Elements Evolve — Ash vs Water → Mud (Water wins)
@@ -115,7 +168,22 @@ public class TutorialScenario
                 IntroTitle = "Elements Evolve",
                 IntroBody = "After each capture, your piece's element transforms. This queen was once Fire, but after a past clash it became Ash.\n\nNow it faces Water. What will happen?",
                 PostTitle = "Think Ahead!",
-                PostBody = "Ash lost to Water and became Mud.\n\nYour element evolves with every capture \u2014 what you are now shapes your future battles. Plan ahead!"
+                PostBody = "Ash lost to Water and became Mud.\n\nYour element evolves with every capture \u2014 what you are now shapes your future battles. Plan ahead!",
+                ForcedMix = new ElementMixResult
+                {
+                    newElement = "Mud",
+                    emoji = "\U0001f7e4",
+                    winningElement = "Water",
+                    reasoning = "Water soaks Ash into Mud"
+                },
+                ForcedReaction = new ElementReactionResult
+                {
+                    flavor = "Fertile mud sprouts new life.",
+                    effects = new[]
+                    {
+                        new ReactionEffectEntry { pattern = "area", distance = 1, target = "empty", effect = "Plant", duration = 3 }
+                    }
+                }
             }
         };
     }
