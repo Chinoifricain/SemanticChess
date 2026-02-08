@@ -13,6 +13,7 @@ public class GameManager : MonoBehaviour
     private IGameMode _currentMode;
     private OnlineGameMode _onlineMode;
     private BoardLayoutData _activeLayout;
+    private TooltipUI _tooltip;
 
     public ChessBoard Board => _board;
     public GameUI GameUI => _gameUI;
@@ -21,6 +22,24 @@ public class GameManager : MonoBehaviour
     public int AIDifficulty { get; set; }
 
     public Coroutine RunCoroutine(IEnumerator routine) => StartCoroutine(routine);
+
+    private void CreateTooltip()
+    {
+        DestroyTooltip();
+        if (_gameUI.TooltipPrefab == null) return;
+        var canvas = _gameUI.GetCanvas();
+        _tooltip = Instantiate(_gameUI.TooltipPrefab, canvas.transform);
+        _tooltip.Init(_board);
+    }
+
+    private void DestroyTooltip()
+    {
+        if (_tooltip != null)
+        {
+            Destroy(_tooltip.gameObject);
+            _tooltip = null;
+        }
+    }
 
     private void Awake()
     {
@@ -80,6 +99,7 @@ public class GameManager : MonoBehaviour
 
         _gameUI.Show();
         _gameUI.UpdateTurn(PieceColor.White);
+        CreateTooltip();
     }
 
     /// <summary>
@@ -114,6 +134,7 @@ public class GameManager : MonoBehaviour
         _gameUI.Show();
         _gameUI.SetOnlineMode(true);
         _gameUI.UpdateOnlineTurn(localColor == PieceColor.White);
+        CreateTooltip();
     }
 
     public void EndMatch()
@@ -140,6 +161,7 @@ public class GameManager : MonoBehaviour
             _onlineMode = null;
         }
 
+        DestroyTooltip();
         _gameUI.SetOnlineMode(false);
         _gameUI.Hide();
         _menuUI.Show();
@@ -186,6 +208,7 @@ public class GameManager : MonoBehaviour
 
         _gameUI.HideGameOver();
         _gameUI.UpdateTurn(PieceColor.White);
+        CreateTooltip();
     }
 
     private void OnOnlineRematchStart()
@@ -214,6 +237,7 @@ public class GameManager : MonoBehaviour
 
         _gameUI.HideGameOver();
         _gameUI.UpdateOnlineTurn(localColor == PieceColor.White);
+        CreateTooltip();
     }
 
     private void OnOpponentDisconnect()

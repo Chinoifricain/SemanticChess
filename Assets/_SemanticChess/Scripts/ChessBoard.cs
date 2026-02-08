@@ -40,6 +40,7 @@ public class ChessBoard : MonoBehaviour
 
     [Header("Tile Coordinates")]
     [SerializeField] private TMP_FontAsset _tileCoordFont;
+    [SerializeField] private Sprite _infoIconSprite;
 
     private readonly ChessPiece[] _board = new ChessPiece[64];
     public ChessPiece GetPiece(int index) => _board[index];
@@ -97,6 +98,11 @@ public class ChessBoard : MonoBehaviour
     private int _hoveredTileIndex = -1;
     private TextMeshPro _tileCoordLabel;
     private Tween _tileCoordTween;
+    private SpriteRenderer _infoIcon;
+    private Tween _infoIconTween;
+    private Tween _infoIconHoverTween;
+    private static readonly float InfoIconRestScale = 1.5f;
+    private static readonly float InfoIconHoverScale = 2.0f;
 
     // --- Public API ---
     public PieceColor CurrentTurn => _currentTurn;
@@ -110,6 +116,8 @@ public class ChessBoard : MonoBehaviour
     public EmojiLoader EmojiService => _emojiService;
     public TMP_FontAsset FloatingTextFont => _floatingTextFont;
     public ChessPiece GetPieceAt(int index) => (index >= 0 && index < 64) ? _board[index] : null;
+    public int HoveredTileIndex => _hoveredTileIndex;
+    public float TileSize => _tileSize;
 
     // --- Events ---
     public event Action<PieceColor> OnTurnChanged;
@@ -117,6 +125,7 @@ public class ChessBoard : MonoBehaviour
     public event Action<int, int> OnMoveMade;
     public event Action<int, int, ElementMixResult, ElementReactionResult> OnCaptureResult;
     public event Action<int> OnHoverChanged;
+    public event Action<int> OnTileHoverChanged;
     public event Action<int> OnPieceSelected;
     public event Action OnPieceDeselected;
     public event Action<CapturedPieceInfo> OnPieceCaptured;
@@ -176,6 +185,16 @@ public class ChessBoard : MonoBehaviour
         _tileCoordLabel.sortingOrder = 10;
         coordGo.SetActive(false);
 
+        // Info icon (shown on hover when tile has content)
+        GameObject infoGo = new GameObject("InfoIcon");
+        infoGo.transform.SetParent(transform, false);
+        _infoIcon = infoGo.AddComponent<SpriteRenderer>();
+        _infoIcon.sprite = _infoIconSprite;
+        _infoIcon.color = new Color(1f, 1f, 1f, 0.5f);
+        _infoIcon.sortingLayerName = "Front";
+        _infoIcon.sortingOrder = 10;
+        infoGo.SetActive(false);
+
         // Track scene children so ResetBoard doesn't destroy them
         foreach (Transform child in transform)
             _staticChildren.Add(child);
@@ -207,7 +226,6 @@ public class ChessBoard : MonoBehaviour
 
     public Vector3 GetTilePosition(int index) => transform.TransformPoint(_tilePositions[index]);
     public Vector3 GetTileLocalPosition(int index) => _tilePositions[index];
-    public float TileSize => _tileSize;
 
     /// <summary>
     /// Convert a world position to board tile index. Returns -1 if outside the board.
@@ -290,10 +308,13 @@ public class ChessBoard : MonoBehaviour
         _hoveredTileIndex = index;
 
         _tileCoordTween?.Kill();
+        _infoIconTween?.Kill();
 
         if (index < 0)
         {
             _tileCoordLabel.gameObject.SetActive(false);
+            _infoIcon.gameObject.SetActive(false);
+            OnTileHoverChanged?.Invoke(index);
             return;
         }
 
@@ -303,6 +324,45 @@ public class ChessBoard : MonoBehaviour
         _tileCoordLabel.transform.localScale = Vector3.one * 2.0f;
         _tileCoordLabel.gameObject.SetActive(true);
         _tileCoordTween = _tileCoordLabel.transform.DOScale(Vector3.one, 0.08f).SetEase(Ease.OutCubic);
+
+        // Info icon at top-left (only if tile has content)
+        bool hasContent = _board[index] != null || _tileEffects[index].Count > 0;
+        if (hasContent)
+        {
+            _infoIcon.transform.localPosition = _tilePositions[index] + new Vector3(-half + _tileSize * 0.15f, half - _tileSize * 0.15f, 0f);
+            _infoIcon.transform.localScale = Vector3.one * (InfoIconRestScale * 2f);
+            _infoIcon.gameObject.SetActive(true);
+            _infoIconTween = _infoIcon.transform.DOScale(Vector3.one * InfoIconRestScale, 0.08f).SetEase(Ease.OutCubic);
+        }
+        else
+        {
+            _infoIcon.gameObject.SetActive(false);
+        }
+
+        OnTileHoverChanged?.Invoke(index);
+    }
+
+    public bool IsInfoIconHovered(Vector3 mouseWorldPos)
+    {
+        if (!_infoIcon.gameObject.activeSelf) return false;
+        float radius = _tileSize * 0.35f;
+        return Vector3.Distance(mouseWorldPos, _infoIcon.transform.position) < radius;
+    }
+
+    public void SetInfoIconHovered(bool hovered)
+    {
+        if (_infoIcon == null || !_infoIcon.gameObject.activeSelf) return;
+        _infoIconHoverTween?.Kill();
+        float target = hovered ? InfoIconHoverScale : InfoIconRestScale;
+        _infoIconHoverTween = _infoIcon.transform
+            .DOScale(Vector3.one * target, 0.1f)
+            .SetEase(hovered ? Ease.OutBack : Ease.OutCubic);
+    }
+
+    public Vector3 GetTileWorldPosition(int index)
+    {
+        if (index < 0 || index >= 64) return Vector3.zero;
+        return transform.TransformPoint(_tilePositions[index]);
     }
 
     // --- AI Helpers ---
@@ -583,9 +643,24 @@ public class ChessBoard : MonoBehaviour
         ChessPiece piece = _board[from];
         bool isCapture = _board[to] != null && !_board[to].HasEffect(EffectType.Shield);
 
+        // Detect castling: king moves 2 squares horizontally
+        bool isCastling = piece.PieceType == PieceType.King && Mathf.Abs((to % 8) - (from % 8)) == 2;
+
         AnimateToTile(piece, to, 0.17f, () =>
         {
-            if (isCapture)
+            if (isCastling)
+            {
+                int row = from / 8;
+                bool kingside = (to % 8) > (from % 8);
+                int rookFrom = kingside ? row * 8 + 7 : row * 8;
+                int rookTo = kingside ? row * 8 + 5 : row * 8 + 3;
+                ChessPiece rook = _board[rookFrom];
+                _board[rookTo] = rook;
+                _board[rookFrom] = null;
+                rook.HasMoved = true;
+                AnimateToTile(rook, rookTo, 0.15f, () => FinishMove(from, to, piece));
+            }
+            else if (isCapture)
             {
                 StartCoroutine(HandleCapture(from, to, piece, _board[to]));
             }
@@ -747,6 +822,14 @@ public class ChessBoard : MonoBehaviour
         attacker.HasMoved = true;
         attacker.Deselect();
 
+        // Auto-promote pawn to Queen on last rank
+        if (attacker.PieceType == PieceType.Pawn)
+        {
+            int row = to / 8;
+            if ((attacker.Color == PieceColor.White && row == 0) || (attacker.Color == PieceColor.Black && row == 7))
+                attacker.SetPieceType(PieceType.Queen);
+        }
+
         // Reveal new element
         attacker.SetElement(mixResult.newElement, mixResult.emoji, _emojiService, _floatingTextFont);
         attacker.RevealNewElement();
@@ -853,6 +936,14 @@ public class ChessBoard : MonoBehaviour
         _board[from] = null;
         piece.HasMoved = true;
         piece.Deselect();
+
+        // Auto-promote pawn to Queen on last rank
+        if (piece.PieceType == PieceType.Pawn)
+        {
+            int row = to / 8;
+            if ((piece.Color == PieceColor.White && row == 0) || (piece.Color == PieceColor.Black && row == 7))
+                piece.SetPieceType(PieceType.Queen);
+        }
 
         // Clear tile-bound effects when moving to a tile without them
         if (!TileHasEffect(to, TileEffectType.Burning) && piece.HasEffect(EffectType.Burning))
@@ -1114,7 +1205,45 @@ public class ChessBoard : MonoBehaviour
         var moves = piece.GetPossibleMoves(fromIndex, _board);
         moves.RemoveAll(to => !IsMoveLegal(fromIndex, to));
         FilterOccupiedBlocked(fromIndex, piece, moves);
+
+        if (piece.PieceType == PieceType.King)
+            AddCastlingMoves(fromIndex, piece, moves);
+
         return moves;
+    }
+
+    private void AddCastlingMoves(int kingIndex, ChessPiece king, List<int> moves)
+    {
+        if (king.HasMoved) return;
+        if (IsInCheck(king.Color)) return;
+
+        int row = kingIndex / 8;
+        PieceColor enemy = king.Color == PieceColor.White ? PieceColor.Black : PieceColor.White;
+
+        // Kingside (O-O): rook at col 7
+        int rookKS = row * 8 + 7;
+        ChessPiece ksRook = _board[rookKS];
+        if (ksRook != null && ksRook.PieceType == PieceType.Rook && ksRook.Color == king.Color && !ksRook.HasMoved)
+        {
+            int f = row * 8 + 5; // square king passes through
+            int g = row * 8 + 6; // king destination
+            if (_board[f] == null && _board[g] == null
+                && !IsSquareAttacked(f, enemy) && !IsSquareAttacked(g, enemy))
+                moves.Add(g);
+        }
+
+        // Queenside (O-O-O): rook at col 0
+        int rookQS = row * 8;
+        ChessPiece qsRook = _board[rookQS];
+        if (qsRook != null && qsRook.PieceType == PieceType.Rook && qsRook.Color == king.Color && !qsRook.HasMoved)
+        {
+            int d = row * 8 + 3; // square king passes through
+            int c = row * 8 + 2; // king destination
+            int b = row * 8 + 1; // must also be empty
+            if (_board[d] == null && _board[c] == null && _board[b] == null
+                && !IsSquareAttacked(d, enemy) && !IsSquareAttacked(c, enemy))
+                moves.Add(c);
+        }
     }
 
     private void FilterOccupiedBlocked(int fromIndex, ChessPiece piece, List<int> moves)

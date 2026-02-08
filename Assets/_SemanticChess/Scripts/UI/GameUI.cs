@@ -12,8 +12,14 @@ public class GameUI : MonoBehaviour
     [SerializeField] private Button _menuButton;
     [SerializeField] private Button _backToMenuButton;
 
+    [Header("Tooltip")]
+    [SerializeField] private TooltipUI _tooltipPrefab;
+
     private bool _isThinking;
     private bool _isOnline;
+
+    public Canvas GetCanvas() => _panel.GetComponentInParent<Canvas>();
+    public TooltipUI TooltipPrefab => _tooltipPrefab;
 
     private void Awake()
     {

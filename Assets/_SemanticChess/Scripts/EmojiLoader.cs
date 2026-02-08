@@ -81,6 +81,10 @@ public class EmojiLoader : MonoBehaviour
 
         if (i >= input.Length) return "";
 
+        // If the first character is a plain ASCII letter/digit, it's not an emoji
+        int firstCp = char.ConvertToUtf32(input, i);
+        if (firstCp < 0x200) return "";
+
         i += char.IsSurrogatePair(input, i) ? 2 : 1;
 
         while (i < input.Length)

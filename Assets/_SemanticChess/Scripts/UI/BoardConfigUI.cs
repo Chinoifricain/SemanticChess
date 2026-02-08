@@ -96,6 +96,15 @@ public class BoardConfigUI : MonoBehaviour
                 ChessPiece piece = _board.GetPieceAt(index);
                 if (piece != null && CanEditPiece(piece))
                 {
+                    // Toggle off if clicking the same piece
+                    if (_selectorUI.IsOpen && index == _selectedSlotIndex)
+                    {
+                        _selectorUI.Hide();
+                        ClearHighlight();
+                        _selectedSlotIndex = -1;
+                        return;
+                    }
+
                     _selectedSlotIndex = index;
                     ShowHighlight(index);
 

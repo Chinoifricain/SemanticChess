@@ -3250,6 +3250,7 @@ MonoBehaviour:
   _effectHitPrefab: {fileID: 5947965339352417426, guid: e6aab94a77bb20047a9ec6b49f9141c4, type: 3}
   _floatingTextFont: {fileID: 11400000, guid: 4c1532495f9682446ada64579d071ca8, type: 2}
   _tileCoordFont: {fileID: 11400000, guid: 2a89fe655fe98474ea3ca1a05902620f, type: 2}
+  _infoIconSprite: {fileID: 2001656092070627258, guid: f271ad690f40b884ba04e5225b11d905, type: 3}
 --- !u!1 &461078926
 GameObject:
   m_ObjectHideFlags: 0
@@ -4404,6 +4405,7 @@ MonoBehaviour:
   _rematchButton: {fileID: 644745867}
   _menuButton: {fileID: 2114380055}
   _backToMenuButton: {fileID: 29226242}
+  _tooltipPrefab: {fileID: 4342842797185188398, guid: eb908d65d35e86c48ad75b7de8607175, type: 3}
 --- !u!1 &594064328
 GameObject:
   m_ObjectHideFlags: 0
