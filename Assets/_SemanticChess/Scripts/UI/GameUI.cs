@@ -126,4 +126,9 @@ public class GameUI : MonoBehaviour
     {
         _backToMenuButton.gameObject.SetActive(visible);
     }
+
+    public void SetTurnText(string text)
+    {
+        _turnIndicator.text = text;
+    }
 }

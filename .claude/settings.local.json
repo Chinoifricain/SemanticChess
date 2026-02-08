@@ -27,7 +27,8 @@
       "Bash(node:*)",
       "Bash(cat:*)",
       "Bash(git check-ignore:*)",
-      "Bash(del:*)"
+      "Bash(del:*)",
+      "WebFetch(domain:itch.io)"
     ]
   }
 }

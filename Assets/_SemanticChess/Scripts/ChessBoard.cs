@@ -38,6 +38,10 @@ public class ChessBoard : MonoBehaviour
     [Header("Floating Text")]
     [SerializeField] private TMP_FontAsset _floatingTextFont;
 
+    [Header("Video Mode")]
+    [SerializeField] private TMP_FontAsset _captionFont;
+    public TMP_FontAsset CaptionFont => _captionFont;
+
     [Header("Tile Coordinates")]
     [SerializeField] private TMP_FontAsset _tileCoordFont;
     [SerializeField] private Sprite _infoIconSprite;
@@ -148,6 +152,14 @@ public class ChessBoard : MonoBehaviour
     {
         _pendingMix = mix;
         _pendingReaction = reaction;
+    }
+
+    /// <summary>
+    /// Play a reaction directly at a tile (no capture needed). Used by video mode.
+    /// </summary>
+    public Coroutine PlayReaction(int centerIndex, ElementReactionResult reaction, PieceColor attackerColor, string tradeOutcome)
+    {
+        return StartCoroutine(ApplyReaction(centerIndex, reaction, attackerColor, tradeOutcome));
     }
 
     public void SetFlipped(bool flipped)
@@ -1795,6 +1807,12 @@ public class ChessBoard : MonoBehaviour
         sr.sortingLayerName = "Default";
         sr.sortingOrder = 0;
 
+        // Fade + scale in
+        sr.color = new Color(sr.color.r, sr.color.g, sr.color.b, 0f);
+        go.transform.localScale = Vector3.one * 0.5f;
+        sr.DOFade(1f, 0.25f).SetEase(Ease.OutQuad);
+        go.transform.DOScale(1f, 0.25f).SetEase(Ease.OutBack);
+
         _tileEffectVisuals[effect] = go;
     }
 
@@ -1802,8 +1820,16 @@ public class ChessBoard : MonoBehaviour
     {
         if (_tileEffectVisuals.TryGetValue(effect, out GameObject go))
         {
-            if (go != null) Destroy(go);
             _tileEffectVisuals.Remove(effect);
+            if (go == null) return;
+            // Fade + scale out, then destroy
+            var sr = go.GetComponent<SpriteRenderer>();
+            DOTween.Kill(go.transform);
+            if (sr != null) DOTween.Kill(sr);
+            var seq = DOTween.Sequence();
+            seq.Append(go.transform.DOScale(0.5f, 0.2f).SetEase(Ease.InBack));
+            if (sr != null) seq.Join(sr.DOFade(0f, 0.2f).SetEase(Ease.InQuad));
+            seq.OnComplete(() => { if (go != null) Destroy(go); });
         }
     }
 

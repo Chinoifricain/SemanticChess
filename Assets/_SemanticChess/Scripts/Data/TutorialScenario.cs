@@ -57,9 +57,9 @@ public class TutorialScenario
                 GuidedFrom = 35,
                 GuidedTo = 28,
                 IntroTitle = "Elements Clash!",
-                IntroBody = "Every piece carries an element. When you capture, the elements fight!\n\nCapture the Plant pawn with your Fire queen.",
+                IntroBody = "Every piece carries an element. When you capture, the elements fight!\n\nCapture the <color=#5ECE5E>Plant</color> pawn with your <color=#FF6B35>Fire</color> queen.",
                 PostTitle = "You Won!",
-                PostBody = "Fire beats Plant \u2014 you won the clash!\n\nWhen you win, the reaction's effects strengthen your side. Always look for favorable element matchups.",
+                PostBody = "<color=#FF6B35>Fire</color> beats <color=#5ECE5E>Plant</color> \u2014 you won the clash!\n\nWhen you win, the reaction's effects strengthen your side. Always look for favorable element matchups.",
                 ForcedMix = new ElementMixResult
                 {
                     newElement = "Ash",
@@ -92,9 +92,9 @@ public class TutorialScenario
                 GuidedFrom = 35,
                 GuidedTo = 28,
                 IntroTitle = "A Risky Fight",
-                IntroBody = "Not every clash goes your way. Your Fire queen faces a Water pawn this time.\n\nMake the capture and see what happens...",
+                IntroBody = "Not every clash goes your way. Your <color=#FF6B35>Fire</color> queen faces a <color=#4DA6FF>Water</color> pawn this time.\n\nMake the capture and see what happens...",
                 PostTitle = "You Lost!",
-                PostBody = "Water beats Fire \u2014 you lost the clash!\n\nWhen you lose, the reaction's effects hurt YOUR pieces instead. Think twice before attacking into a bad matchup.",
+                PostBody = "<color=#4DA6FF>Water</color> beats <color=#FF6B35>Fire</color> \u2014 you lost the clash!\n\nWhen you lose, the reaction's effects hurt YOUR pieces instead. Think twice before attacking into a bad matchup.",
                 ForcedMix = new ElementMixResult
                 {
                     newElement = "Steam",
@@ -129,9 +129,9 @@ public class TutorialScenario
                 GuidedFrom = 42,
                 GuidedTo = 27,
                 IntroTitle = "Worth the Risk",
-                IntroBody = "Your knight eyes a pawn defended by a rook. Normally, sacrificing a knight for a pawn is terrible!\n\nBut your Air dominates their Water. Take the plunge!",
+                IntroBody = "Your knight eyes a pawn defended by a rook. Normally, sacrificing a knight for a pawn is terrible!\n\nBut your <color=#6A9FB5>Air</color> dominates their <color=#4DA6FF>Water</color>. Take the plunge!",
                 PostTitle = "Calculated!",
-                PostBody = "Air freezes Water into Ice \u2014 you won the clash!\n\nWinning can shield your pieces, buff your allies, or cripple the enemy. A 'bad' chess trade becomes a power play with the right elements.",
+                PostBody = "<color=#6A9FB5>Air</color> freezes <color=#4DA6FF>Water</color> into <color=#3AAFCC>Ice</color> \u2014 you won the clash!\n\nWinning can shield your pieces, buff your allies, or cripple the enemy. A 'bad' chess trade becomes a power play with the right elements.",
                 ForcedMix = new ElementMixResult
                 {
                     newElement = "Ice",
@@ -166,9 +166,9 @@ public class TutorialScenario
                 GuidedFrom = 35,
                 GuidedTo = 28,
                 IntroTitle = "Elements Evolve",
-                IntroBody = "After each capture, your piece's element transforms. This queen was once Fire, but after a past clash it became Ash.\n\nNow it faces Water. What will happen?",
+                IntroBody = "After each capture, your piece's element transforms. This queen was once <color=#FF6B35>Fire</color>, but after a past clash it became <color=#808080>Ash</color>.\n\nNow it faces <color=#4DA6FF>Water</color>. What will happen?",
                 PostTitle = "Think Ahead!",
-                PostBody = "Ash lost to Water and became Mud.\n\nYour element evolves with every capture \u2014 what you are now shapes your future battles. Plan ahead!",
+                PostBody = "<color=#808080>Ash</color> lost to <color=#4DA6FF>Water</color> and became <color=#8B6914>Mud</color>.\n\nYour element evolves with every capture \u2014 what you are now shapes your future battles. Plan ahead!",
                 ForcedMix = new ElementMixResult
                 {
                     newElement = "Mud",

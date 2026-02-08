@@ -13,10 +13,18 @@ public class GameManager : MonoBehaviour
     [Header("Tutorial")]
     [SerializeField] private GameObject _tutorialCardPrefab;
 
+    [Header("Game Log")]
+    [SerializeField] private GameLog _gameLog;
+
     private IGameMode _currentMode;
     private OnlineGameMode _onlineMode;
     private BoardLayoutData _activeLayout;
     private TooltipUI _tooltip;
+
+    // Video mode activation: V → I → D sequence
+    private int _videoSeqIndex;
+    private float _videoSeqTimer;
+    private static readonly KeyCode[] VideoSequence = { KeyCode.V, KeyCode.I, KeyCode.D };
 
     public ChessBoard Board => _board;
     public GameUI GameUI => _gameUI;
@@ -115,9 +123,78 @@ public class GameManager : MonoBehaviour
         _menuUI.Show();
     }
 
+    private IEnumerator StartVideo()
+    {
+        yield return null; // wait one frame for board init
+        if (!_board.IsInitialized) yield break;
+
+        _menuUI.Hide();
+        _board.SetFlipped(false);
+
+        var videoUI = new VideoUI();
+        videoUI.Init(_gameUI.GetCanvas(), _board.CaptionFont);
+
+        var videoMode = new VideoGameMode();
+        videoMode.SetVideoUI(videoUI);
+        _currentMode = videoMode;
+
+        _board.OnTurnChanged += OnTurnChanged;
+
+        _currentMode.OnMatchStart(_board);
+
+        _gameUI.Show();
+        _gameUI.SetBackToMenuVisible(false);
+        _gameUI.SetTurnText("");
+        if (_gameLog != null) _gameLog.gameObject.SetActive(false);
+    }
+
+    public void EndVideo()
+    {
+        if (_currentMode != null)
+        {
+            _currentMode.OnDeactivate();
+            _currentMode = null;
+        }
+
+        _board.OnTurnChanged -= OnTurnChanged;
+        _board.ClearBoard();
+
+        if (_gameLog != null) _gameLog.gameObject.SetActive(true);
+        _gameUI.Hide();
+        _menuUI.Show();
+    }
+
     private void Update()
     {
         _currentMode?.OnUpdate();
+
+        // V-I-D sequence on menu → start video mode
+        if (_currentMode == null)
+        {
+            if (_videoSeqIndex > 0)
+            {
+                _videoSeqTimer -= Time.deltaTime;
+                if (_videoSeqTimer <= 0f)
+                    _videoSeqIndex = 0;
+            }
+
+            if (Input.GetKeyDown(VideoSequence[_videoSeqIndex]))
+            {
+                _videoSeqIndex++;
+                _videoSeqTimer = 1f;
+                if (_videoSeqIndex >= VideoSequence.Length)
+                {
+                    _videoSeqIndex = 0;
+                    StartCoroutine(StartVideo());
+                }
+            }
+            else if (Input.anyKeyDown)
+            {
+                // Wrong key — restart if it matches the first key
+                _videoSeqIndex = Input.GetKeyDown(VideoSequence[0]) ? 1 : 0;
+                _videoSeqTimer = 1f;
+            }
+        }
     }
 
     public void StartMatch(GameModeType modeType, BoardLayoutData layout = null)
@@ -310,7 +387,7 @@ public class GameManager : MonoBehaviour
 
     private void OnTurnChanged(PieceColor color)
     {
-        if (_onlineMode == null)
+        if (_onlineMode == null && _currentMode?.ModeType != GameModeType.Video)
             _gameUI.UpdateTurn(color);
         // Online mode updates turn text via OnlineGameMode.OnTurnStart
 

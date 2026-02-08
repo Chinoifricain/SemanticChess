@@ -3249,6 +3249,7 @@ MonoBehaviour:
     sprite: {fileID: 21300000, guid: 9e2c66c3a0935914ba08227a27221dcc, type: 3}
   _effectHitPrefab: {fileID: 5947965339352417426, guid: e6aab94a77bb20047a9ec6b49f9141c4, type: 3}
   _floatingTextFont: {fileID: 11400000, guid: 4c1532495f9682446ada64579d071ca8, type: 2}
+  _captionFont: {fileID: 11400000, guid: 2a89fe655fe98474ea3ca1a05902620f, type: 2}
   _tileCoordFont: {fileID: 11400000, guid: 2a89fe655fe98474ea3ca1a05902620f, type: 2}
   _infoIconSprite: {fileID: 2001656092070627258, guid: f271ad690f40b884ba04e5225b11d905, type: 3}
 --- !u!1 &461078926
@@ -8062,6 +8063,7 @@ MonoBehaviour:
   _gameUI: {fileID: 564658693}
   _roomManager: {fileID: 0}
   _tutorialCardPrefab: {fileID: 3032429174877142470, guid: 85ff49cacde47574a91d5ddee91f6675, type: 3}
+  _gameLog: {fileID: 1259704263}
 --- !u!4 &980626409
 Transform:
   m_ObjectHideFlags: 0
