@@ -131,6 +131,9 @@ public class ChessBoard : MonoBehaviour
     public event Action<CapturedPieceInfo> OnPieceCaptured;
     public event Action OnBoardReset;
 
+    // --- Tutorial pause hook ---
+    public System.Func<string, int, ElementMixResult, IEnumerator> TutorialPause;
+
     // --- Online: pre-computed reaction from opponent ---
     private ElementMixResult _pendingMix;
     private ElementReactionResult _pendingReaction;
@@ -462,8 +465,19 @@ public class ChessBoard : MonoBehaviour
     public void ResetBoard(BoardLayoutData layout = null)
     {
         _activeLayout = layout;
+        ClearBoard();
+        SetupBoard();
+        OnBoardReset?.Invoke();
+    }
 
+    /// <summary>
+    /// Clears all pieces, effects, and state without spawning new pieces.
+    /// Used by ResetBoard and TutorialGameMode.
+    /// </summary>
+    public void ClearBoard()
+    {
         StopAllCoroutines();
+        TutorialPause = null;
 
         // Kill all tweens
         foreach (Transform child in transform)
@@ -518,9 +532,6 @@ public class ChessBoard : MonoBehaviour
         _capturedBlackPieces.Clear();
 
         Time.timeScale = 1f;
-
-        SetupBoard();
-        OnBoardReset?.Invoke();
     }
 
     /// <summary>
@@ -613,6 +624,21 @@ public class ChessBoard : MonoBehaviour
         _board[index] = piece;
     }
 
+    /// <summary>
+    /// Spawn a piece with an explicit element. Used by TutorialGameMode for custom board setups.
+    /// </summary>
+    public void SpawnPieceWithElement(int index, PieceType type, PieceColor color, string element, string emoji)
+    {
+        GameObject go = Instantiate(_piecePrefab, transform);
+        go.transform.localPosition = _tilePositions[index];
+
+        ChessPiece piece = go.GetComponent<ChessPiece>();
+        piece.Init(type, color);
+        piece.SetElement(element, emoji, _emojiService, _floatingTextFont);
+
+        _board[index] = piece;
+    }
+
     // --- Selection & Movement ---
 
     // OnTileClicked logic is now in game modes (LocalGameMode, etc.)
@@ -625,6 +651,7 @@ public class ChessBoard : MonoBehaviour
 
         _selectedIndex = index;
         piece.Select();
+        AudioManager.Instance?.PlayPieceSelect();
         _validMoves.Clear();
         _validMoves.AddRange(GetLegalMoves(index));
         ShowIndicators();
@@ -697,7 +724,11 @@ public class ChessBoard : MonoBehaviour
         attacker.HideElement();
         defender.HideElement();
         attacker.PlayFightParticle();
+        AudioManager.Instance?.PlayCapture(attacker.PieceType);
         GameObject fightTitle = SpawnFightTitle(to, atkElem, defElem);
+
+        if (TutorialPause != null)
+            yield return StartCoroutine(TutorialPause("fight_start", to, null));
 
         ElementMixResult mixResult = null;
         ElementReactionResult reactionResult = null;
@@ -735,12 +766,13 @@ public class ChessBoard : MonoBehaviour
         }
         else
         {
+            int mergeDepth = Mathf.Max(ElementCollection.GetDepth(atkElem), ElementCollection.GetDepth(defElem)) + 1;
             bool mixWasCached = _elementService.HasCachedMix(atkElem, defElem);
 
             if (mixWasCached)
             {
                 // L1 hit: cached mix — get it instantly, fire reaction call in background
-                yield return _elementService.GetElementMix(atkElem, defElem, r => mixResult = r);
+                yield return _elementService.GetElementMix(atkElem, defElem, mergeDepth, r => mixResult = r);
 
                 StartCoroutine(_elementService.GetElementReaction(
                     mixResult, reactionCtx,
@@ -762,7 +794,7 @@ public class ChessBoard : MonoBehaviour
                 {
                     // L2 miss: combined AI call for mix + reaction
                     yield return _elementService.GetElementMixAndReaction(
-                        atkElem, defElem, reactionCtx,
+                        atkElem, defElem, reactionCtx, mergeDepth,
                         (mix, reaction) => { mixResult = mix; reactionResult = reaction; });
 
                     // Save to persistent server in background
@@ -810,9 +842,16 @@ public class ChessBoard : MonoBehaviour
         attacker.StopFightParticle();
         DismissFightTitle(fightTitle);
 
-        // Trade result text animation
+        // Trade result text animation + sound
+        if (isDraw) AudioManager.Instance?.PlayTradeDraw();
+        else if (attackerWins) AudioManager.Instance?.PlayTradeWon();
+        else AudioManager.Instance?.PlayTradeLost();
+
         float tradeDuration = PlayTradeResultText(to, attackerWins, isDraw);
         yield return new WaitForSeconds(tradeDuration);
+
+        if (TutorialPause != null)
+            yield return StartCoroutine(TutorialPause("fight_end", to, mixResult));
 
         // Resolve capture
         RecordCapture(defender);
@@ -833,12 +872,16 @@ public class ChessBoard : MonoBehaviour
         // Reveal new element
         attacker.SetElement(mixResult.newElement, mixResult.emoji, _emojiService, _floatingTextFont);
         attacker.RevealNewElement();
+        AudioManager.Instance?.PlayElementReveal();
 
         yield return new WaitForSeconds(1.8f);
 
         // Apply elemental reaction effects
         string tradeOutcome = isDraw ? "draw" : (attackerWins ? "won" : "lost");
         yield return StartCoroutine(ApplyReaction(to, reactionResult, attacker.Color, tradeOutcome));
+
+        if (TutorialPause != null)
+            yield return StartCoroutine(TutorialPause("post_reaction", to, mixResult));
 
         // Ice slide check
         if (TileHasEffect(to, TileEffectType.Ice))
@@ -932,6 +975,7 @@ public class ChessBoard : MonoBehaviour
 
     private void FinishMove(int from, int to, ChessPiece piece)
     {
+        AudioManager.Instance?.PlayPieceMove(piece.PieceType);
         _board[to] = piece;
         _board[from] = null;
         piece.HasMoved = true;
@@ -1015,6 +1059,7 @@ public class ChessBoard : MonoBehaviour
             int kingIdx = FindKing(_currentTurn);
             if (kingIdx >= 0)
                 SpawnFloatingTextStyled(_tilePositions[kingIdx], "Checkmate!", new Color(1f, 0.2f, 0.2f), 0f, 0f);
+            AudioManager.Instance?.PlayCheckmate();
             Debug.Log($"[Chess] Checkmate! {winner} wins!");
             OnGameOver?.Invoke(new MatchResult { Outcome = MatchOutcome.Checkmate, Winner = winner });
         }
@@ -1024,6 +1069,7 @@ public class ChessBoard : MonoBehaviour
             int kingIdx = FindKing(_currentTurn);
             if (kingIdx >= 0)
                 SpawnFloatingTextStyled(_tilePositions[kingIdx], "Stalemate!", new Color(0.7f, 0.7f, 0.7f), 0f, 0f);
+            AudioManager.Instance?.PlayStalemate();
             Debug.Log("[Chess] Stalemate!");
             OnGameOver?.Invoke(new MatchResult { Outcome = MatchOutcome.Stalemate, Winner = PieceColor.White });
         }
@@ -1032,6 +1078,7 @@ public class ChessBoard : MonoBehaviour
             int kingIdx = FindKing(_currentTurn);
             if (kingIdx >= 0)
                 SpawnFloatingTextStyled(_tilePositions[kingIdx], "Check!", new Color(1f, 0.85f, 0.3f), 0f, 0f);
+            AudioManager.Instance?.PlayCheck();
         }
     }
 
@@ -1338,6 +1385,8 @@ public class ChessBoard : MonoBehaviour
     {
         ChessPiece piece = _board[index];
         if (piece == null) return;
+
+        AudioManager.Instance?.PlayEffect(effect.Type);
 
         switch (effect.Type)
         {
@@ -1685,11 +1734,23 @@ public class ChessBoard : MonoBehaviour
         }
     }
 
+    public void PulseMoveIndicator(int tileIndex)
+    {
+        int i = _validMoves.IndexOf(tileIndex);
+        if (i < 0 || i >= _indicators.Count) return;
+
+        var dot = _indicators[i];
+        dot.transform.DOScale(Vector3.one * 1.4f, 0.5f)
+            .SetEase(Ease.InOutSine)
+            .SetLoops(-1, LoopType.Yoyo);
+    }
+
     private void ClearIndicators()
     {
         foreach (GameObject dot in _indicators)
         {
             GameObject d = dot;
+            DOTween.Kill(d.transform);
             d.transform.DOScale(Vector3.zero, 0.057f).SetEase(Ease.OutCubic)
                 .OnComplete(() => Destroy(d));
         }
@@ -1700,6 +1761,7 @@ public class ChessBoard : MonoBehaviour
     {
         if (_selectedIndex == -1) return;
         _board[_selectedIndex]?.Deselect();
+        AudioManager.Instance?.PlayPieceDeselect();
         ClearIndicators();
         _selectedIndex = -1;
         _validMoves.Clear();
@@ -2406,6 +2468,7 @@ public class ChessBoard : MonoBehaviour
         if (isInstant)
         {
             // Spawn all particles at once, apply effects immediately
+            AudioManager.Instance?.PlayEffectHit(0);
             foreach (int idx in group.AllPatternCells)
             {
                 bool hasEffect = effectsByCell.TryGetValue(idx, out var fxList);
@@ -2441,12 +2504,16 @@ public class ChessBoard : MonoBehaviour
 
             int prevDist = 0;
             bool first = true;
+            int waveIndex = 0;
             foreach (var kvp in byDistance)
             {
                 if (!first && kvp.Key > prevDist)
                     yield return new WaitForSeconds((kvp.Key - prevDist) * EffectSpreadDelay);
                 first = false;
                 prevDist = kvp.Key;
+
+                AudioManager.Instance?.PlayEffectHit(waveIndex);
+                waveIndex++;
 
                 foreach (int idx in kvp.Value)
                 {

@@ -71,6 +71,7 @@ public class GameLog : MonoBehaviour
     private void SlideOpen()
     {
         _isOpen = true;
+        AudioManager.Instance?.PlayPanelOpen();
         _slideTween?.Kill();
         _slideTween = _panel.DOAnchorPosX(_openX, _slideDuration).SetEase(Ease.OutBack);
     }
@@ -78,6 +79,7 @@ public class GameLog : MonoBehaviour
     private void SlideClosed()
     {
         _isOpen = false;
+        AudioManager.Instance?.PlayPanelClose();
         _slideTween?.Kill();
         _slideTween = _panel.DOAnchorPosX(_openX + _panelWidth - _peekWidth, _slideDuration).SetEase(Ease.OutBack);
     }

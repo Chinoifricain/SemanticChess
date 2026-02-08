@@ -29,6 +29,10 @@ public class MenuUI : MonoBehaviour
     [SerializeField] private TMP_Text _waitingText;
     [SerializeField] private Button _waitingCancelButton;
 
+    [Header("Audio Toggles")]
+    [SerializeField] private Toggle _musicToggle;
+    [SerializeField] private Toggle _sfxToggle;
+
     [Header("Board Config")]
     [SerializeField] private BoardConfigUI _boardConfigUI;
     [SerializeField] private Button _editLayoutButton;
@@ -45,7 +49,7 @@ public class MenuUI : MonoBehaviour
     private int _pendingDifficulty;
     private BoardLayoutData _onlineLayout;
 
-    private void Awake()
+    private void Start()
     {
         _localButton.onClick.AddListener(() =>
         {
@@ -82,6 +86,18 @@ public class MenuUI : MonoBehaviour
         {
             _boardConfigUI.OnConfigReady += OnConfigReady;
             _boardConfigUI.OnConfigCancelled += OnConfigCancelled;
+        }
+
+        // Audio toggles
+        if (_musicToggle != null)
+        {
+            _musicToggle.isOn = AudioManager.Instance.MusicMuted;
+            _musicToggle.onValueChanged.AddListener(on => AudioManager.Instance.SetMusicMuted(!on));
+        }
+        if (_sfxToggle != null)
+        {
+            _sfxToggle.isOn = AudioManager.Instance.SfxMuted;
+            _sfxToggle.onValueChanged.AddListener(on => AudioManager.Instance.SetSfxMuted(!on));
         }
 
         // Set up AI difficulty sub-buttons (hidden behind parent)
@@ -124,6 +140,7 @@ public class MenuUI : MonoBehaviour
     private void UnfoldDifficulty()
     {
         _difficultyOpen = true;
+        AudioManager.Instance?.PlayPanelOpen();
         _difficultyTween?.Kill();
         _difficultyTween = DOTween.Sequence();
 
@@ -140,6 +157,7 @@ public class MenuUI : MonoBehaviour
     private void FoldDifficulty()
     {
         _difficultyOpen = false;
+        AudioManager.Instance?.PlayPanelClose();
         _difficultyTween?.Kill();
         _difficultyTween = DOTween.Sequence();
 
@@ -179,6 +197,7 @@ public class MenuUI : MonoBehaviour
     private void UnfoldOnline()
     {
         _onlineOpen = true;
+        AudioManager.Instance?.PlayPanelOpen();
         _onlineTween?.Kill();
         _onlineTween = DOTween.Sequence();
 
@@ -195,6 +214,7 @@ public class MenuUI : MonoBehaviour
     private void FoldOnline()
     {
         _onlineOpen = false;
+        AudioManager.Instance?.PlayPanelClose();
         _onlineTween?.Kill();
         _onlineTween = DOTween.Sequence();
 
@@ -235,6 +255,7 @@ public class MenuUI : MonoBehaviour
 
     private void OnJoinBack()
     {
+        AudioManager.Instance?.PlayCancel();
         if (_joinPanel != null) _joinPanel.SetActive(false);
         _panel.SetActive(true);
         PopChildButtons(_panel);
@@ -243,9 +264,10 @@ public class MenuUI : MonoBehaviour
     private void OnJoinConfirm()
     {
         string code = _codeInput != null ? _codeInput.text.Trim().ToUpper() : "";
-        if (code.Length != 4)
+        if (code.Length != 6)
         {
-            Debug.LogWarning("[MenuUI] Room code must be 4 characters");
+            Debug.LogWarning("[MenuUI] Room code must be 6 characters");
+            AudioManager.Instance?.PlayError();
             return;
         }
 
@@ -262,6 +284,7 @@ public class MenuUI : MonoBehaviour
 
     private void OnWaitingCancel()
     {
+        AudioManager.Instance?.PlayCancel();
         HideWaiting();
         UnsubscribeRoom();
         GameManager.Instance.RoomManager.Disconnect();
@@ -372,27 +395,28 @@ public class MenuUI : MonoBehaviour
         _pendingMode = mode;
         _pendingConfigMode = configMode;
 
-        // First game ever: skip config (except Edit Layout which always shows)
-        if (!ElementCollection.HasPlayedBefore && configMode != ConfigMode.EditOnly)
+        // Edit Layout button: always show config screen
+        if (configMode == ConfigMode.EditOnly)
         {
-            if (mode == GameModeType.Online)
-            {
-                _panel.SetActive(false);
-                if (configMode == ConfigMode.OnlineWhite)
-                    DoCreateRoom();
-                else
-                    ShowJoinCodePanel();
-            }
-            else
-            {
-                GameManager.Instance.StartMatch(mode);
-            }
+            _panel.SetActive(false);
+            _boardConfigUI.Show(configMode, GameManager.Instance.Board);
             return;
         }
 
-        // Show config screen
-        _panel.SetActive(false);
-        _boardConfigUI.Show(configMode, GameManager.Instance.Board);
+        // Game modes: start directly with saved layout
+        var layout = BoardLayout.GetLayout();
+        if (mode == GameModeType.Online)
+        {
+            _panel.SetActive(false);
+            if (configMode == ConfigMode.OnlineWhite)
+                DoCreateRoom();
+            else
+                ShowJoinCodePanel();
+        }
+        else
+        {
+            GameManager.Instance.StartMatch(mode, layout);
+        }
     }
 
     private void OnConfigReady(BoardLayoutData layout)

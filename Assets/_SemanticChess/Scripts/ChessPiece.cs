@@ -337,7 +337,7 @@ public class ChessPiece : MonoBehaviour
             _elementLabel.sortingLayerID = SortingLayer.NameToID("Pieces");
             _elementLabel.sortingOrder = 3;
             _elementLabel.rectTransform.sizeDelta = new Vector2(4f, 0.5f);
-            _elementLabel.enableWordWrapping = false;
+            _elementLabel.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
             _elementLabel.overflowMode = TextOverflowModes.Overflow;
         }
 

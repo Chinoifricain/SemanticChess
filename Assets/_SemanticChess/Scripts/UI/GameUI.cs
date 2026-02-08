@@ -121,4 +121,9 @@ public class GameUI : MonoBehaviour
     {
         _gameOverPanel.SetActive(false);
     }
+
+    public void SetBackToMenuVisible(bool visible)
+    {
+        _backToMenuButton.gameObject.SetActive(visible);
+    }
 }

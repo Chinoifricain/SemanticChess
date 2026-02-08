@@ -69,6 +69,7 @@ public class BoardConfigUI : MonoBehaviour
 
         _panel.SetActive(true);
         PopChildButtons(_panel);
+        AudioManager.Instance?.PlayPanelOpen();
     }
 
     public void Hide()
@@ -192,6 +193,7 @@ public class BoardConfigUI : MonoBehaviour
 
     private void OnCancel()
     {
+        AudioManager.Instance?.PlayCancel();
         Hide();
         OnConfigCancelled?.Invoke();
     }

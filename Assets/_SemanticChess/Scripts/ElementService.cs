@@ -54,10 +54,8 @@ public struct ReactionContext
 
 public class ElementService : MonoBehaviour
 {
-    private const string API_URL = "https://api-relay.raphael-tan-fr.workers.dev/gemini";
-    private const string API_TOKEN = "mrMPhQ9eazu1YYD";
+    private const string SERVER_URL = "https://semantic-chess-rooms.raphael-tan-fr.workers.dev";
     private const string MODEL = "gemini-2.0-flash";
-    private const string MERGE_URL = "https://semantic-chess-rooms.raphael-tan-fr.workers.dev";
 
     private readonly Dictionary<string, ElementMixResult> _cache = new();
 
@@ -66,13 +64,13 @@ public class ElementService : MonoBehaviour
     public bool HasCachedMix(string a, string b) => _cache.ContainsKey(GetCacheKey(a, b));
 
     /// <summary>Returns cached or freshly-fetched element mix (no reaction).</summary>
-    public IEnumerator GetElementMix(string atkElem, string defElem, Action<ElementMixResult> callback)
+    public IEnumerator GetElementMix(string atkElem, string defElem, int mergeDepth, Action<ElementMixResult> callback)
     {
         string key = GetCacheKey(atkElem, defElem);
         if (_cache.TryGetValue(key, out var cached)) { callback?.Invoke(cached); yield break; }
 
         string response = null;
-        yield return SendRequest(ElementPrompts.BuildMixPrompt(atkElem, defElem), r => response = r);
+        yield return SendRequest(ElementPrompts.BuildMixPrompt(atkElem, defElem, mergeDepth), r => response = r);
 
         if (response == null) { callback?.Invoke(null); yield break; }
 
@@ -83,11 +81,11 @@ public class ElementService : MonoBehaviour
 
     /// <summary>Single API call that returns both element mix AND reaction (used when mix is not cached).</summary>
     public IEnumerator GetElementMixAndReaction(
-        string atkElem, string defElem, ReactionContext ctx,
+        string atkElem, string defElem, ReactionContext ctx, int mergeDepth,
         Action<ElementMixResult, ElementReactionResult> callback)
     {
         string response = null;
-        yield return SendRequest(ElementPrompts.BuildCombinedPrompt(atkElem, defElem, ctx), r => response = r);
+        yield return SendRequest(ElementPrompts.BuildCombinedPrompt(atkElem, defElem, ctx, mergeDepth), r => response = r);
 
         if (response == null) { callback?.Invoke(null, null); yield break; }
 
@@ -140,7 +138,7 @@ public class ElementService : MonoBehaviour
         string key = GetCacheKey(atkElem, defElem);
         string encodedKey = UnityWebRequest.EscapeURL(key);
 
-        using var www = UnityWebRequest.Get($"{MERGE_URL}/merges/{encodedKey}");
+        using var www = UnityWebRequest.Get($"{SERVER_URL}/merges/{encodedKey}");
         www.timeout = 5;
         yield return www.SendWebRequest();
 
@@ -178,7 +176,7 @@ public class ElementService : MonoBehaviour
         string mixJson = JsonUtility.ToJson(mix);
         string body = $"{{\"key\":\"{key}\",\"mix\":{mixJson}}}";
 
-        using var www = new UnityWebRequest($"{MERGE_URL}/merges", "POST");
+        using var www = new UnityWebRequest($"{SERVER_URL}/merges", "POST");
         www.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
         www.downloadHandler = new DownloadHandlerBuffer();
         www.SetRequestHeader("Content-Type", "application/json");
@@ -206,11 +204,10 @@ $@"{{""model"":""{MODEL}"",""payload"":{{""contents"":[{{""parts"":[{{""text"":"
         string json = BuildRequestJson(prompt);
         byte[] body = Encoding.UTF8.GetBytes(json);
 
-        using var www = new UnityWebRequest(API_URL, "POST");
+        using var www = new UnityWebRequest($"{SERVER_URL}/gemini", "POST");
         www.uploadHandler = new UploadHandlerRaw(body);
         www.downloadHandler = new DownloadHandlerBuffer();
         www.SetRequestHeader("Content-Type", "application/json");
-        www.SetRequestHeader("Authorization", $"Bearer {API_TOKEN}");
         www.timeout = 15;
 
         yield return www.SendWebRequest();

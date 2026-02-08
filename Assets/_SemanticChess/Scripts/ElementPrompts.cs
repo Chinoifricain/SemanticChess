@@ -1,12 +1,17 @@
 public static class ElementPrompts
 {
-    public static string BuildMixPrompt(string attacker, string defender)
+    public static string BuildMixPrompt(string attacker, string defender, int mergeDepth)
     {
+        string depthHint = GetDepthHint(mergeDepth);
+
         return
 $@"Two chess piece elements collide: ""{attacker}"" captures ""{defender}"".
 
-1. What new element is created from mixing these two? 1 word strongly preferred. Pick the most obvious, intuitive result — real substances (Ash, Steam, Mud, Ice, Lava), forces (Thunder, Gravity), or well-known fantasy concepts (Mithril, Dragon, Holy, Venom, Curse). NEVER invent compound words like ""Ashbloom"" or ""Skymist"". 2 words only for common terms (""Dry Ice"", ""Mind Control"").
-2. Pick 1-2 emoji that LITERALLY depict the element (e.g. Mud=🟤, Steam=💨, Fire=🔥, Ice=🧊, Lava=🌋, Thunder=⚡, Venom=🐍, Crystal=💎). Choose the most obvious, recognizable emoji.
+MERGE DEPTH: {mergeDepth} ({GetDepthTier(mergeDepth)})
+{depthHint}
+
+1. What new element is created from mixing these two? 1 word strongly preferred. NEVER invent compound words like ""Ashbloom"" or ""Skymist"". 2 words only for common terms (""Dry Ice"", ""Mind Control"").
+2. Pick 1-2 emoji that LITERALLY depict the element. Choose the most obvious, recognizable emoji.
 3. Which element wins semantically? (classic: Water beats Fire, Fire beats Plant, Plant beats Air, Air beats Water — but be creative with evolved/exotic elements)
 
 Return ONLY valid JSON, no markdown:
@@ -96,17 +101,22 @@ Return ONLY valid JSON, no markdown:
 {{""effects"":[{{""pattern"":""+"",""distance"":2,""obstructed"":true,""target"":""debuff"",""effect"":""Stun"",""duration"":2}}],""flavor"":""Element does something dramatic and interesting!""}}";
     }
 
-    public static string BuildCombinedPrompt(string attacker, string defender, ReactionContext ctx)
+    public static string BuildCombinedPrompt(string attacker, string defender, ReactionContext ctx, int mergeDepth)
     {
         string tendency = GetTendencyHint(ctx.PieceType);
+        string depthHint = GetDepthHint(mergeDepth);
 
         return
 $@"Two chess piece elements collide on a chess board. Answer both parts in a single JSON response.
 
 PART 1 — ELEMENT MIX:
 ""{attacker}"" captures ""{defender}"".
-1. What new element is created from mixing these two? 1 word strongly preferred. Pick the most obvious, intuitive result — real substances (Ash, Steam, Mud, Ice, Lava), forces (Thunder, Gravity), or well-known fantasy concepts (Mithril, Dragon, Holy, Venom, Curse). NEVER invent compound words like ""Ashbloom"" or ""Skymist"". 2 words only for common terms (""Dry Ice"", ""Mind Control"").
-2. Pick 1-2 emoji that LITERALLY depict the element (e.g. Mud=🟤, Steam=💨, Fire=🔥, Ice=🧊, Lava=🌋, Thunder=⚡, Venom=🐍, Crystal=💎). Choose the most obvious, recognizable emoji.
+
+MERGE DEPTH: {mergeDepth} ({GetDepthTier(mergeDepth)})
+{depthHint}
+
+1. What new element is created from mixing these two? 1 word strongly preferred. NEVER invent compound words like ""Ashbloom"" or ""Skymist"". 2 words only for common terms (""Dry Ice"", ""Mind Control"").
+2. Pick 1-2 emoji that LITERALLY depict the element. Choose the most obvious, recognizable emoji.
 3. Which element wins semantically? (Water beats Fire, Fire beats Plant, Plant beats Air, Air beats Water — be creative with exotic elements)
 
 PART 2 — ELEMENTAL REACTION:
@@ -202,6 +212,22 @@ Return ONLY valid JSON, no markdown:
         PieceType.Queen  => 'Q',
         PieceType.King   => 'K',
         _ => '?'
+    };
+
+    public static string GetDepthTier(int depth) => depth switch
+    {
+        <= 1 => "common",
+        2    => "uncommon",
+        3    => "rare",
+        _    => "legendary"
+    };
+
+    public static string GetDepthHint(int depth) => depth switch
+    {
+        <= 1 => "These are basic elements. Pick the most obvious, intuitive result — real substances (Ash, Steam, Mud, Ice, Lava), forces (Thunder, Gravity), or common fantasy concepts (Venom, Crystal).",
+        2    => "These are evolved elements (one generation deep). Go beyond the basics — pick interesting but still recognizable concepts: Obsidian, Plasma, Quicksand, Mirage, Amber, Blight, Eclipse.",
+        3    => "These are rare elements (two+ generations deep). Be creative — mythical, arcane, or extraordinary concepts: Phoenix, Aether, Leviathan, Stardust, Rift, Singularity, Chimera.",
+        _    => "These are legendary elements (deep lineage). Be bold and exotic — cosmic, divine, or truly unique concepts: Oblivion, Genesis, Ragnarok, Primordial, Nirvana, Eschaton, Ouroboros."
     };
 
     public static string GetTendencyHint(string pieceType)

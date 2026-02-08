@@ -10,6 +10,9 @@ public class GameManager : MonoBehaviour
     [SerializeField] private GameUI _gameUI;
     [SerializeField] private RoomManager _roomManager;
 
+    [Header("Tutorial")]
+    [SerializeField] private GameObject _tutorialCardPrefab;
+
     private IGameMode _currentMode;
     private OnlineGameMode _onlineMode;
     private BoardLayoutData _activeLayout;
@@ -56,6 +59,59 @@ public class GameManager : MonoBehaviour
         BoardLayout.Load();
 
         _gameUI.Hide();
+
+        if (!ElementCollection.HasPlayedBefore)
+        {
+            StartCoroutine(StartTutorial());
+        }
+        else
+        {
+            _menuUI.Show();
+        }
+    }
+
+    private IEnumerator StartTutorial()
+    {
+        yield return null; // wait one frame for board init
+        if (!_board.IsInitialized) yield break;
+
+        _menuUI.Hide();
+        _board.SetFlipped(false);
+
+        // Create tutorial UI (card display)
+        var tutoUI = new TutorialManager();
+        tutoUI.Init(_tutorialCardPrefab);
+
+        // Create tutorial game mode
+        var tutoMode = new TutorialGameMode();
+        tutoMode.SetTutorialUI(tutoUI);
+        _currentMode = tutoMode;
+
+        // Only subscribe to turn changes (no game over or collection during tutorial)
+        _board.OnTurnChanged += OnTurnChanged;
+
+        _currentMode.OnMatchStart(_board);
+
+        _gameUI.Show();
+        _gameUI.SetBackToMenuVisible(false);
+        _gameUI.UpdateTurn(PieceColor.White);
+        AudioManager.Instance?.PlayGameStart();
+    }
+
+    public void EndTutorial()
+    {
+        if (_currentMode != null)
+        {
+            _currentMode.OnDeactivate();
+            _currentMode = null;
+        }
+
+        _board.OnTurnChanged -= OnTurnChanged;
+        _board.ClearBoard();
+
+        ElementCollection.HasPlayedBefore = true;
+
+        _gameUI.Hide();
         _menuUI.Show();
     }
 
@@ -100,6 +156,7 @@ public class GameManager : MonoBehaviour
         _gameUI.Show();
         _gameUI.UpdateTurn(PieceColor.White);
         CreateTooltip();
+        AudioManager.Instance?.PlayGameStart();
     }
 
     /// <summary>
@@ -135,6 +192,7 @@ public class GameManager : MonoBehaviour
         _gameUI.SetOnlineMode(true);
         _gameUI.UpdateOnlineTurn(localColor == PieceColor.White);
         CreateTooltip();
+        AudioManager.Instance?.PlayGameStart();
     }
 
     public void EndMatch()

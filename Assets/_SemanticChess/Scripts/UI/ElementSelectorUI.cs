@@ -380,7 +380,7 @@ public class ElementSelectorUI : MonoBehaviour
     private static void ClampRight(TMP_Text text)
     {
         if (text == null || !text.gameObject.activeSelf) return;
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
         text.overflowMode = TextOverflowModes.Masking;
         text.ForceMeshUpdate();
 

@@ -23,6 +23,7 @@ public class JuicyButton : MonoBehaviour, IPointerEnterHandler, IPointerExitHand
     private Tween _scaleTween;
     private bool _hovered;
     private bool _pressed;
+    private float _baseScale = 1f;
 
     private void Awake()
     {
@@ -50,13 +51,19 @@ public class JuicyButton : MonoBehaviour, IPointerEnterHandler, IPointerExitHand
         _rt.anchoredPosition += _appliedOffset;
     }
 
+    public void SetBaseScale(float scale)
+    {
+        _baseScale = scale;
+    }
+
     public void OnPointerEnter(PointerEventData eventData)
     {
         _hovered = true;
+        AudioManager.Instance?.PlayButtonHover();
         if (_pressed) return;
         _scaleTween?.Kill();
-        _rt.localScale = Vector3.one * _popScale;
-        _scaleTween = _rt.DOScale(Vector3.one * _hoverScale, _popDuration).SetEase(Ease.OutCubic).SetUpdate(true);
+        _rt.localScale = Vector3.one * (_baseScale * _popScale);
+        _scaleTween = _rt.DOScale(Vector3.one * (_baseScale * _hoverScale), _popDuration).SetEase(Ease.OutCubic).SetUpdate(true);
     }
 
     public void OnPointerExit(PointerEventData eventData)
@@ -64,21 +71,22 @@ public class JuicyButton : MonoBehaviour, IPointerEnterHandler, IPointerExitHand
         _hovered = false;
         if (_pressed) return;
         _scaleTween?.Kill();
-        _scaleTween = _rt.DOScale(Vector3.one, _popDuration).SetEase(Ease.OutCubic).SetUpdate(true);
+        _scaleTween = _rt.DOScale(Vector3.one * _baseScale, _popDuration).SetEase(Ease.OutCubic).SetUpdate(true);
     }
 
     public void OnPointerDown(PointerEventData eventData)
     {
         _pressed = true;
+        AudioManager.Instance?.PlayButtonClick();
         _scaleTween?.Kill();
-        _scaleTween = _rt.DOScale(_squishScale, _squishDuration).SetEase(Ease.OutCubic).SetUpdate(true);
+        _scaleTween = _rt.DOScale(_squishScale * _baseScale, _squishDuration).SetEase(Ease.OutCubic).SetUpdate(true);
     }
 
     public void OnPointerUp(PointerEventData eventData)
     {
         _pressed = false;
         _scaleTween?.Kill();
-        Vector3 target = _hovered ? Vector3.one * _hoverScale : Vector3.one;
+        Vector3 target = Vector3.one * (_baseScale * (_hovered ? _hoverScale : 1f));
         _scaleTween = _rt.DOScale(target, 0.2f).SetEase(Ease.OutBack).SetUpdate(true);
     }
 
@@ -93,7 +101,7 @@ public class JuicyButton : MonoBehaviour, IPointerEnterHandler, IPointerExitHand
 
         _scaleTween?.Kill();
         _rt.localScale = Vector3.zero;
-        _scaleTween = _rt.DOScale(Vector3.one, 0.25f)
+        _scaleTween = _rt.DOScale(Vector3.one * _baseScale, 0.25f)
             .SetDelay(delay)
             .SetEase(Ease.OutBack)
             .SetUpdate(true);

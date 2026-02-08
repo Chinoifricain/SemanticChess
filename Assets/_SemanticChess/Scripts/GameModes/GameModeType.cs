@@ -2,5 +2,6 @@ public enum GameModeType
 {
     Local,
     VsAI,
-    Online
+    Online,
+    Tutorial
 }

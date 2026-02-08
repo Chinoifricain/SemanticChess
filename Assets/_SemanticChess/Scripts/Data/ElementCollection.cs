@@ -170,6 +170,27 @@ public static class ElementCollection
             _lookup[e.name.ToLowerInvariant()] = e;
     }
 
+    public static int GetDepth(string name)
+    {
+        EnsureLoaded();
+        if (string.IsNullOrEmpty(name)) return 0;
+        return ComputeDepth(name.ToLowerInvariant(), new HashSet<string>());
+    }
+
+    private const int MAX_DEPTH = 10;
+
+    private static int ComputeDepth(string lower, HashSet<string> visited)
+    {
+        if (visited.Count >= MAX_DEPTH) return MAX_DEPTH;
+        if (!visited.Add(lower)) return 0; // cycle guard
+        if (!_lookup.TryGetValue(lower, out var entry)) return 0;
+        if (string.IsNullOrEmpty(entry.parentA) && string.IsNullOrEmpty(entry.parentB)) return 0;
+
+        int da = string.IsNullOrEmpty(entry.parentA) ? 0 : ComputeDepth(entry.parentA.ToLowerInvariant(), visited);
+        int db = string.IsNullOrEmpty(entry.parentB) ? 0 : ComputeDepth(entry.parentB.ToLowerInvariant(), visited);
+        return Math.Max(da, db) + 1;
+    }
+
     private static void EnsureLoaded()
     {
         if (_data == null) Load();

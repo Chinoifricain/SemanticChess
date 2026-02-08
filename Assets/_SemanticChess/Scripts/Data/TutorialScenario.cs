@@ -1,0 +1,122 @@
+using System.Collections.Generic;
+
+public struct TutorialPiece
+{
+    public int Index;
+    public PieceType Type;
+    public PieceColor Color;
+    public string Element;
+    public string Emoji;
+
+    public TutorialPiece(int index, PieceType type, PieceColor color, string element, string emoji)
+    {
+        Index = index;
+        Type = type;
+        Color = color;
+        Element = element;
+        Emoji = emoji;
+    }
+}
+
+public class TutorialScenario
+{
+    public TutorialPiece[] Pieces;
+    public int GuidedFrom;
+    public int GuidedTo;
+    public string IntroTitle;
+    public string IntroBody;
+    public string PostTitle;
+    public string PostBody;
+
+    // Board indices (row*8+col, row 0=rank 8, row 7=rank 1):
+    // e1=60, e8=4, e7=12, d4=35, e5=28, c3=42, f3=45, c4=34, d5=27, b4=33, e4=36
+
+    public static List<TutorialScenario> GetAll()
+    {
+        return new List<TutorialScenario>
+        {
+            // Step 1: Winning the Clash — Fire vs Plant → Ash (Fire wins)
+            // e7=12: near capture at e5, queen at d4 does not check e7
+            new TutorialScenario
+            {
+                Pieces = new[]
+                {
+                    new TutorialPiece(60, PieceType.King, PieceColor.White, "Fire", "\U0001f525"),
+                    new TutorialPiece(12, PieceType.King, PieceColor.Black, "Water", "\U0001f4a7"),
+                    new TutorialPiece(35, PieceType.Queen, PieceColor.White, "Fire", "\U0001f525"),
+                    new TutorialPiece(28, PieceType.Pawn, PieceColor.Black, "Plant", "\U0001f33f"),
+                    new TutorialPiece(42, PieceType.Knight, PieceColor.White, "Water", "\U0001f4a7"),
+                    new TutorialPiece(45, PieceType.Bishop, PieceColor.White, "Air", "\U0001f4a8"),
+                },
+                GuidedFrom = 35,
+                GuidedTo = 28,
+                IntroTitle = "Elements Clash!",
+                IntroBody = "Every piece carries an element. When you capture, the elements fight!\n\nCapture the Plant pawn with your Fire queen.",
+                PostTitle = "You Won!",
+                PostBody = "Fire beats Plant \u2014 you won the clash!\n\nWhen you win, the reaction's effects strengthen your side. Always look for favorable element matchups."
+            },
+
+            // Step 2: Losing the Clash — Fire vs Water → Steam (Water wins)
+            new TutorialScenario
+            {
+                Pieces = new[]
+                {
+                    new TutorialPiece(60, PieceType.King, PieceColor.White, "Fire", "\U0001f525"),
+                    new TutorialPiece(12, PieceType.King, PieceColor.Black, "Water", "\U0001f4a7"),
+                    new TutorialPiece(35, PieceType.Queen, PieceColor.White, "Fire", "\U0001f525"),
+                    new TutorialPiece(28, PieceType.Pawn, PieceColor.Black, "Water", "\U0001f4a7"),
+                    new TutorialPiece(42, PieceType.Knight, PieceColor.White, "Air", "\U0001f4a8"),
+                    new TutorialPiece(45, PieceType.Bishop, PieceColor.White, "Plant", "\U0001f33f"),
+                },
+                GuidedFrom = 35,
+                GuidedTo = 28,
+                IntroTitle = "A Risky Fight",
+                IntroBody = "Not every clash goes your way. Your Fire queen faces a Water pawn this time.\n\nMake the capture and see what happens...",
+                PostTitle = "You Lost!",
+                PostBody = "Water beats Fire \u2014 you lost the clash!\n\nWhen you lose, the reaction's effects hurt YOUR pieces instead. Think twice before attacking into a bad matchup."
+            },
+
+            // Step 3: Sacrifice — Air knight takes Water pawn defended by rook → Ice (Air wins)
+            // c3=42, d5=27, d8=3 (rook defends d5 along d-file), e7=12 (near capture at d5)
+            new TutorialScenario
+            {
+                Pieces = new[]
+                {
+                    new TutorialPiece(60, PieceType.King, PieceColor.White, "Fire", "\U0001f525"),
+                    new TutorialPiece(12, PieceType.King, PieceColor.Black, "Fire", "\U0001f525"),
+                    new TutorialPiece(42, PieceType.Knight, PieceColor.White, "Air", "\U0001f4a8"),
+                    new TutorialPiece(27, PieceType.Pawn, PieceColor.Black, "Water", "\U0001f4a7"),
+                    new TutorialPiece(3, PieceType.Rook, PieceColor.Black, "Plant", "\U0001f33f"),
+                    new TutorialPiece(36, PieceType.Pawn, PieceColor.White, "Plant", "\U0001f33f"),
+                    new TutorialPiece(44, PieceType.Bishop, PieceColor.White, "Fire", "\U0001f525"),
+                },
+                GuidedFrom = 42,
+                GuidedTo = 27,
+                IntroTitle = "Worth the Risk",
+                IntroBody = "Your knight eyes a pawn defended by a rook. Normally, sacrificing a knight for a pawn is terrible!\n\nBut your Air dominates their Water. Take the plunge!",
+                PostTitle = "Calculated!",
+                PostBody = "Air freezes Water into Ice \u2014 you won the clash!\n\nWinning can shield your pieces, buff your allies, or cripple the enemy. A 'bad' chess trade becomes a power play with the right elements."
+            },
+
+            // Step 4: Elements Evolve — Ash vs Water → Mud (Water wins)
+            new TutorialScenario
+            {
+                Pieces = new[]
+                {
+                    new TutorialPiece(60, PieceType.King, PieceColor.White, "Fire", "\U0001f525"),
+                    new TutorialPiece(12, PieceType.King, PieceColor.Black, "Water", "\U0001f4a7"),
+                    new TutorialPiece(35, PieceType.Queen, PieceColor.White, "Ash", "\U0001faa8"),
+                    new TutorialPiece(28, PieceType.Pawn, PieceColor.Black, "Water", "\U0001f4a7"),
+                    new TutorialPiece(42, PieceType.Knight, PieceColor.White, "Plant", "\U0001f33f"),
+                    new TutorialPiece(45, PieceType.Bishop, PieceColor.White, "Fire", "\U0001f525"),
+                },
+                GuidedFrom = 35,
+                GuidedTo = 28,
+                IntroTitle = "Elements Evolve",
+                IntroBody = "After each capture, your piece's element transforms. This queen was once Fire, but after a past clash it became Ash.\n\nNow it faces Water. What will happen?",
+                PostTitle = "Think Ahead!",
+                PostBody = "Ash lost to Water and became Mud.\n\nYour element evolves with every capture \u2014 what you are now shapes your future battles. Plan ahead!"
+            }
+        };
+    }
+}
